@@ -79,7 +79,65 @@ Open **http://127.0.0.1:5173** and start asking questions.
 
 ---
 
-## Docs
+## Advanced configuration
+
+### Run fully local (no API key)
+
+```toml
+[runtime]
+mode = "local"
+```
+
+Then warm the local models before first run (downloads ~8 GB on Apple Silicon):
+
+```bash
+source .venv/bin/activate
+quarry warm-local-models
+```
+
+### Override the auto-detected hardware profile
+
+```toml
+[runtime]
+profile = "apple_silicon"   # Mac M-series — MLX Qwen 4B models
+# profile = "gpu"           # Linux / Windows — HuggingFace Qwen 7B models (~23 GB)
+```
+
+### Use a different API provider
+
+`llm_base_url` accepts any OpenAI-compatible endpoint:
+
+```toml
+[hosted]
+llm_base_url = "https://api.openai.com/v1"      # OpenAI directly
+# llm_base_url = "https://openrouter.ai/api/v1" # OpenRouter (default)
+llm_api_key  = "YOUR_API_KEY_HERE"
+llm_model    = "gpt-4o"
+```
+
+### Move the model cache off your main drive
+
+Models can reach 10+ GB. Redirect the cache to an external drive:
+
+```toml
+[paths]
+model_cache_dir = "/Volumes/external/quarry-models"
+```
+
+### Offload only generation, keep everything else local
+
+The default `hybrid` mode already does this. You can fine-tune which tasks go hosted:
+
+```toml
+[hosted]
+use_live_generation          = true   # answer generation → hosted
+use_live_decomposition       = false  # query decomposition → local
+use_live_metadata_enrichment = false  # chunk enrichment → local
+```
+
+---
+
+
 
 | | |
 |---|---|
