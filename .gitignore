@@ -1,0 +1,41 @@
+# Python
+.venv/
+__pycache__/
+.pytest_cache/
+*.pyc
+*.pyo
+src/quarry.egg-info/
+
+# macOS
+.DS_Store
+
+# Frontend build
+*.tsbuildinfo
+web/node_modules/
+web/dist/
+web/vite.config.js
+web/vite.config.d.ts
+
+# Data — generated artifacts, logs, and model weights are never committed
+# Use content-level patterns (not directory-level) so .gitkeep files are preserved
+data/artifacts/*
+!data/artifacts/.gitkeep
+data/logs/*
+!data/logs/.gitkeep
+data/model-cache/*
+!data/model-cache/.gitkeep
+
+# Source documents — user-specific PDFs; add your own under data/sources/
+data/sources/*
+!data/sources/.gitkeep
+
+# Corpus — generated/project-specific chunk data
+data/corpus/*
+!data/corpus/.gitkeep
+
+# Playwright / test runner output
+output/*
+!output/.gitkeep
+
+# Local config — copy quarry.local.toml.example → quarry.local.toml and fill in your values
+quarry.local.toml

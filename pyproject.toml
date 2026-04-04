@@ -1,0 +1,55 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "quarry"
+version = "0.1.0"
+description = "Backend MVP for the QUARRY grey literature retrieval and review system."
+readme = "docs/README.md"
+requires-python = ">=3.13"
+dependencies = [
+  "fastapi>=0.115.0,<1.0.0",
+  "httpx>=0.28.0,<1.0.0",
+  "pydantic>=2.10.0,<3.0.0",
+  "pypdf>=5.3.0,<6.0.0",
+  "uvicorn>=0.35.0,<1.0.0",
+]
+
+[project.scripts]
+quarry = "quarry.cli:main"
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.3.0,<9.0.0",
+]
+local = [
+  "torch>=2.1.0,<3.0.0",
+  "torchvision>=0.20.0,<1.0.0",
+  "transformers>=4.46.0,<6.0.0",
+  "sentence-transformers>=5.3.0,<6.0.0",
+  "sentencepiece>=0.2.0,<1.0.0",
+  "faiss-cpu>=1.13.2,<2.0.0",
+  "rank-bm25>=0.2.2,<1.0.0",
+  "pymupdf>=1.26.0,<2.0.0",
+  "mlx-vlm>=0.3.4,<1.0.0",
+  "olmocr>=0.4.27,<1.0.0",
+  "mineru>=2.7.6,<3.0.0",
+]
+e2e = [
+  "playwright>=1.58.0,<2.0.0",
+  "pytest-playwright>=0.7.2,<1.0.0",
+]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+markers = [
+  "e2e: browser end-to-end coverage for the review workflow",
+]
