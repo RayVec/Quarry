@@ -153,7 +153,7 @@ def generation_prompt(request: GenerationRequest) -> str:
         "CLAIM sentences state a single fact drawn from one passage.\n"
         "Format: [CLAIM] Your sentence here. [REF: \"exact quote from passage\"]\n"
         "The quote must be copied verbatim from a passage.\n"
-        "For standard response generation, use 15 to 40 words with no\n"
+        "For standard response generation, use 10 to 40 words with no\n"
         "paraphrasing or truncation.\n\n"
         "SYNTHESIS sentences connect findings across multiple passages.\n"
         "Format: [SYNTHESIS] Your sentence here. [REF: \"quote from passage A\"] [REF: \"quote from passage B\"]\n"
