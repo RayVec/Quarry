@@ -1,104 +1,115 @@
-# config.toml.example
+# config.example.toml
 #
-# Copy this file to config.toml and fill in the values for your setup.
-# config.toml is gitignored and should never be committed.
-#
-# Config is also readable from environment variables (see docs/README.md).
-# TOML sections map to QUARRY_* env vars; this file is the preferred day-to-day path.
+# Copy this file to config.toml and fill in your values.
+# config.toml is gitignored — it will never be committed.
 
-# ---------------------------------------------------------------------------
-# Runtime mode and profile
-# ---------------------------------------------------------------------------
+# ============================================================
+# STEP 1 — Choose your runtime mode and hardware profile
+# These two settings control everything about how QUARRY runs.
+# ============================================================
 [runtime]
 
-# mode: controls which components are allowed to run
-#   hybrid  — local-first with optional hosted generation (recommended default)
-#   local   — strict local only; startup fails if local models are not warmed
-#   hosted  — all generation delegated to the hosted LLM
+# mode: overall behaviour
+#   hybrid  — local models handle retrieval; hosted model handles generation (recommended)
+#   local   — everything runs locally; startup fails if models are not warmed first
+#   hosted  — all generation delegated to the hosted LLM; local models still handle retrieval
 mode = "hybrid"
 
-# profile: selects the local model stack
-#   apple_silicon          — MLX-based Qwen models; best for Apple Silicon
-#   gpu — standard HuggingFace models; for Linux/Windows with a GPU
+# profile: which local model stack to load
+#   apple_silicon — MLX-based Qwen models optimised for Mac M-series chips
+#   gpu           — standard HuggingFace models for Linux / Windows with a CUDA GPU
+#
+# QUARRY auto-detects this based on your hardware, so you usually don't need to change it.
 profile = "apple_silicon"
 
-# ---------------------------------------------------------------------------
-# Paths
-# ---------------------------------------------------------------------------
-[paths]
 
-# Where to find raw source documents (PDFs, .md, .txt)
-corpus_dir = "data/sources"
-
-# Where QUARRY writes generated index artifacts
-artifacts_dir = "data/artifacts"
-
-# Where model weights are cached (can grow to 10+ GB)
-# Remove this line to use the default HuggingFace cache (~/.cache/huggingface)
-model_cache_dir = "data/model-cache"
-
-# ---------------------------------------------------------------------------
-# Hosted LLM (required only when use_live_generation = true)
-# Supports any OpenAI-compatible API endpoint (OpenRouter, OpenAI, etc.)
-# ---------------------------------------------------------------------------
+# ============================================================
+# STEP 2 — Add your API key for hosted generation
+# Only required when mode = "hybrid" or mode = "hosted".
+# Skip this section entirely if you want to run fully local.
+# ============================================================
 [hosted]
 
-# Base URL for the OpenAI-compatible chat API
-llm_base_url = "https://openrouter.ai/api/v1"
-
-# Your API key — keep this secret, never commit it
+# Your API key — this is the only secret you need to provide.
+# Supports any OpenAI-compatible endpoint (OpenRouter, OpenAI, Azure, etc.)
 llm_api_key = "YOUR_API_KEY_HERE"
 
-# Model identifier as accepted by the API
+# The API endpoint — defaults to OpenRouter, which gives access to many models
+llm_base_url = "https://openrouter.ai/api/v1"
+
+# Which model to use for answer generation
 llm_model = "openai/gpt-4o-mini"
 
-# Toggle individual hosted tasks — set to true to offload to the hosted model
-use_live_generation            = true   # answer / supplement / refinement generation
-use_live_decomposition         = false  # query decomposition (local is usually fine)
-use_live_metadata_enrichment   = false  # chunk metadata enrichment (local is usually fine)
+# Whether to use the hosted model for generation (leave the others false)
+use_live_generation          = true   # main toggle — answer / supplement / refinement
+use_live_decomposition       = false  # keep local; the small MLX model handles this well
+use_live_metadata_enrichment = false  # keep local; the small MLX model handles this well
 
-# ---------------------------------------------------------------------------
-# MLX local models (used when profile = "apple_silicon")
-# ---------------------------------------------------------------------------
+
+# ============================================================
+# ADVANCED — Most users never need to touch anything below.
+# ============================================================
+
+# ------------------------------------
+# Paths
+# ------------------------------------
+[paths]
+
+# Where to put your source PDFs and documents before ingesting
+corpus_dir = "data/sources"
+
+# Where QUARRY writes generated index artifacts after ingestion
+artifacts_dir = "data/artifacts"
+
+# Where downloaded model weights are cached (can grow to 10+ GB)
+# Remove this line to fall back to the default HuggingFace cache (~/.cache/huggingface)
+model_cache_dir = "data/model-cache"
+
+
+# ------------------------------------
+# MLX models (apple_silicon profile only)
+# ------------------------------------
 [mlx]
 
-# Text model for decomposition, enrichment, and local generation
+# Text model used for query decomposition, metadata enrichment, and local generation
 text_model = "mlx-community/Qwen3.5-4B-MLX-4bit"
 
-# Vision-language model for PDF page parsing
+# Vision-language model used to parse PDF pages into structured text
 vision_model = "mlx-community/Qwen3-VL-4B-Instruct-4bit"
 
-# Token budget for local generation responses
+# Maximum tokens the local model generates per response
 max_new_tokens = 768
 
-# Longest page dimension (pixels) when rasterising PDF pages for the parser
+# Longest page edge in pixels when rasterising PDF pages for the parser
 page_image_dim = 1024
 
-# ---------------------------------------------------------------------------
-# Local transformer models (used when profile = "gpu")
-# ---------------------------------------------------------------------------
+
+# ------------------------------------
+# Local transformer models (gpu profile only)
+# ------------------------------------
 [local_models]
 
-# Embedding model — used for dense retrieval indexing and query encoding
+# Embedding model — encodes chunks and queries for dense retrieval
 embedding_model = "intfloat/e5-large-v2"
 
-# Reranker — applied after sparse+dense fusion
+# Reranker — scores and re-orders candidates after sparse + dense fusion
 reranker_model = "BAAI/bge-reranker-v2-m3"
 
-# NLI model — for grounding confidence scoring
+# NLI model — checks whether retrieved passages actually support generated claims
 nli_model = "khalidalt/DeBERTa-v3-large-mnli"
 
-# ---------------------------------------------------------------------------
+
+# ------------------------------------
 # Parser settings
-# ---------------------------------------------------------------------------
+# ------------------------------------
 [parser]
 
 # Primary PDF parser:
-#   mlx_vlm              — MLX vision parser (set automatically for apple_silicon)
-#   olmocr_transformers  — olmOCR transformers path (gpu default)
-#   pymupdf_text         — lightweight text extraction (fast, lossy)
-#   pypdf_text           — fallback text extraction
+#   mlx_vlm              — MLX vision parser (default for apple_silicon)
+#   olmocr_transformers  — olmOCR vision parser (default for gpu)
+#   pymupdf_text         — fast lightweight text extraction (lossy, no layout)
+#   pypdf_text           — basic text fallback
 primary = "mlx_vlm"
 
-# Fallback parser used when the primary parser fails on a page
+# Parser used when the primary fails on a page
 fallback = "pymupdf_text"
