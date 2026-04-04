@@ -15,12 +15,10 @@
 #   hosted  — all generation delegated to the hosted LLM; local models still handle retrieval
 mode = "hybrid"
 
-# profile: which local model stack to load
-#   apple_silicon — MLX-based Qwen models optimised for Mac M-series chips
-#   gpu           — standard HuggingFace models for Linux / Windows with a CUDA GPU
-#
-# QUARRY auto-detects this based on your hardware, so you usually don't need to change it.
-profile = "apple_silicon"
+# profile: auto-detected from your hardware (apple_silicon on Mac M-series, gpu elsewhere)
+# Only set this if you want to override the auto-detected value.
+# profile = "apple_silicon"
+# profile = "gpu"
 
 
 # ============================================================

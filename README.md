@@ -41,14 +41,7 @@ cp config.example.toml config.toml
 
 Open `config.toml`. There are only two things most users need to set:
 
-**1. Your hardware profile** — already auto-detected, but confirm it matches:
-```toml
-[runtime]
-profile = "apple_silicon"   # Mac M-series
-# profile = "gpu"           # Linux / Windows with a CUDA GPU
-```
-
-**2. Your API key** — needed for answer generation:
+**Your API key** — needed for answer generation:
 ```toml
 [hosted]
 llm_api_key = "YOUR_API_KEY_HERE"
