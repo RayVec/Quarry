@@ -9,16 +9,16 @@ def test_settings_from_env_defaults_to_apple_profile_on_apple_silicon(monkeypatc
 
     settings = Settings.from_env()
 
-    assert settings.runtime_profile == "apple_lite_mlx"
+    assert settings.runtime_profile == "apple_silicon"
 
 
 def test_settings_from_env_respects_explicit_runtime_profile(monkeypatch) -> None:
-    monkeypatch.setenv("QUARRY_RUNTIME_PROFILE", "full_local_transformers")
+    monkeypatch.setenv("QUARRY_RUNTIME_PROFILE", "gpu")
     monkeypatch.setattr("quarry.config.is_apple_silicon_host", lambda: True)
 
     settings = Settings.from_env()
 
-    assert settings.runtime_profile == "full_local_transformers"
+    assert settings.runtime_profile == "gpu"
     monkeypatch.delenv("QUARRY_RUNTIME_PROFILE", raising=False)
 
 
@@ -57,7 +57,7 @@ def test_settings_from_toml_config_file(tmp_path) -> None:
         """
 [runtime]
 mode = "hybrid"
-profile = "apple_lite_mlx"
+profile = "apple_silicon"
 
 [hosted]
 llm_base_url = "https://openrouter.ai/api/v1"
@@ -71,7 +71,7 @@ use_live_decomposition = false
     settings = Settings.from_env(config_path=config_path)
 
     assert settings.runtime_mode == "hybrid"
-    assert settings.runtime_profile == "apple_lite_mlx"
+    assert settings.runtime_profile == "apple_silicon"
     assert settings.llm_base_url == "https://openrouter.ai/api/v1"
     assert settings.llm_model == "stepfun/step-3.5-flash:free"
     assert settings.use_live_generation is True

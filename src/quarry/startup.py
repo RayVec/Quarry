@@ -204,7 +204,7 @@ def build_start_parser() -> argparse.ArgumentParser:
     parser.add_argument("--config", help="Path to a TOML config file. Defaults to quarry.local.toml when present.")
     parser.add_argument(
         "--profile",
-        choices=["apple_lite_mlx", "full_local_transformers"],
+        choices=["apple_silicon", "gpu"],
         help="Select the QUARRY runtime profile for this run.",
     )
     parser.add_argument("--sources", default="data/sources", help="Directory containing source PDFs/markdown/text files.")

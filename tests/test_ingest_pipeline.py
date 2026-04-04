@@ -188,7 +188,7 @@ def test_validate_flags_pdf_quality_issues_in_parsed_artifacts(tmp_path: Path) -
                 "vector_index_path": str(vector_index_path),
                 "vector_metadata_path": str(vector_metadata_path),
                 "structural_index_path": str(structural_index_path),
-                "runtime_profile": "full_local_transformers",
+                "runtime_profile": "gpu",
                 "parser_provider": "allenai/olmOCR-7B-0725-FP8",
                 "active_model_ids": [],
                 "documents": [
@@ -211,7 +211,7 @@ def test_validate_flags_pdf_quality_issues_in_parsed_artifacts(tmp_path: Path) -
         artifacts_dir=artifacts_dir,
         embedding_dimensions=64,
         use_local_models=False,
-        runtime_profile="full_local_transformers",
+        runtime_profile="gpu",
     )
 
     validation = validate(settings)
@@ -230,7 +230,7 @@ def test_apple_lite_ingest_records_runtime_profile_and_parser_provider(tmp_path:
         artifacts_dir=tmp_path / "artifacts",
         embedding_dimensions=64,
         use_local_models=False,
-        runtime_profile="apple_lite_mlx",
+        runtime_profile="apple_silicon",
     )
 
     ingest_documents([str(source)], settings)
@@ -238,7 +238,7 @@ def test_apple_lite_ingest_records_runtime_profile_and_parser_provider(tmp_path:
     parsed_document_path = Path(manifest["documents"][0]["parsed_document_path"])
     parsed_document = json.loads(parsed_document_path.read_text())
 
-    assert manifest["runtime_profile"] == "apple_lite_mlx"
+    assert manifest["runtime_profile"] == "apple_silicon"
     assert manifest["parser_provider"] == settings.mlx_vision_model_name
     assert parsed_document["parser_used"] == "basic_text"
     assert parsed_document["parser_provenance"] == ["basic_text"]
@@ -248,7 +248,7 @@ def test_apple_lite_parsing_pipeline_prefers_mlx_parser_before_basic_fallback(tm
     settings = Settings(
         corpus_dir=tmp_path / "corpus",
         artifacts_dir=tmp_path / "artifacts",
-        runtime_profile="apple_lite_mlx",
+        runtime_profile="apple_silicon",
         runtime_mode="hybrid",
         use_local_models=True,
     )
@@ -289,7 +289,7 @@ def test_ensure_parser_ready_auto_warms_apple_profile(tmp_path: Path, monkeypatc
     settings = Settings(
         corpus_dir=tmp_path / "corpus",
         artifacts_dir=tmp_path / "artifacts",
-        runtime_profile="apple_lite_mlx",
+        runtime_profile="apple_silicon",
         runtime_mode="hybrid",
         use_local_models=True,
     )
@@ -319,7 +319,7 @@ def test_ensure_parser_ready_raises_if_parser_remains_unavailable(tmp_path: Path
     settings = Settings(
         corpus_dir=tmp_path / "corpus",
         artifacts_dir=tmp_path / "artifacts",
-        runtime_profile="apple_lite_mlx",
+        runtime_profile="apple_silicon",
         runtime_mode="hybrid",
         use_local_models=True,
     )
@@ -335,7 +335,7 @@ def test_warm_local_models_records_apple_profile_status(tmp_path: Path, monkeypa
     settings = Settings(
         corpus_dir=tmp_path / "corpus",
         artifacts_dir=tmp_path / "artifacts",
-        runtime_profile="apple_lite_mlx",
+        runtime_profile="apple_silicon",
         use_local_models=True,
     )
 
@@ -385,7 +385,7 @@ def test_warm_local_models_records_apple_profile_status(tmp_path: Path, monkeypa
     result = warm_local_models(settings)
     payload = json.loads(Path(result["status_path"]).read_text())
 
-    assert payload["runtime_profile"] == "apple_lite_mlx"
+    assert payload["runtime_profile"] == "apple_silicon"
     assert payload["parser_provider"] == settings.mlx_vision_model_name
     assert payload["text"].startswith("ready:")
     assert payload["decomposition"].startswith("ready:")

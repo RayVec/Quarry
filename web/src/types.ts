@@ -17,7 +17,7 @@ export type QueryProgressStage =
   | "failed";
 
 export type RuntimeMode = "local" | "hybrid" | "hosted";
-export type RuntimeProfile = "apple_lite_mlx" | "full_local_transformers";
+export type RuntimeProfile = "apple_silicon" | "gpu";
 
 export type SentenceStatus =
   | "verified"

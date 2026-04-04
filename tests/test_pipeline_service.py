@@ -205,7 +205,7 @@ def test_pipeline_runs_end_to_end_with_sample_components() -> None:
         generation_provider="mlx:mlx-community/Qwen3.5-4B-MLX-4bit",
         parser_provider="mlx-community/Qwen3-VL-4B-Instruct-4bit",
         runtime_mode="hybrid",
-        runtime_profile="apple_lite_mlx",
+        runtime_profile="apple_silicon",
         local_model_status={"text": "configured", "parser": "configured"},
         active_model_ids=[
             "mlx-community/Qwen3.5-4B-MLX-4bit",
@@ -222,7 +222,7 @@ def test_pipeline_runs_end_to_end_with_sample_components() -> None:
     assert session.facets
     assert session.citation_index
     assert session.parsed_sentences
-    assert session.runtime_profile.value == "apple_lite_mlx"
+    assert session.runtime_profile.value == "apple_silicon"
     assert session.parser_provider == "mlx-community/Qwen3-VL-4B-Instruct-4bit"
     assert session.active_model_ids[0] == "mlx-community/Qwen3.5-4B-MLX-4bit"
 

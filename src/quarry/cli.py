@@ -15,7 +15,7 @@ from quarry.startup import serve_backend
 def add_profile_argument(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--profile",
-        choices=["apple_lite_mlx", "full_local_transformers"],
+        choices=["apple_silicon", "gpu"],
         help="Select the QUARRY runtime profile for this command.",
     )
 

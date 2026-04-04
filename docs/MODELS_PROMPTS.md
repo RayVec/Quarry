@@ -18,7 +18,7 @@ That status file is the reliable source for whether a local component is ready.
 
 ## 2. Runtime Profiles
 
-### 2.1 `apple_lite_mlx`
+### 2.1 `apple_silicon`
 
 Primary local text model:
 
@@ -37,7 +37,7 @@ Intended use:
 - local generation when hosted generation is disabled
 - MLX-based document parsing
 
-### 2.2 `full_local_transformers`
+### 2.2 `gpu`
 
 Use this profile on Linux or Windows machines with a GPU. It loads standard HuggingFace models — larger than the MLX equivalents but compatible with any CUDA-capable hardware.
 
@@ -85,7 +85,7 @@ Used for:
 
 - page-level PDF parsing
 - extracting headings, paragraphs, tables, and figure captions
-- this is the preferred and required PDF parser path for `apple_lite_mlx`
+- this is the preferred and required PDF parser path for `apple_silicon`
 - ingest warms and checks this parser before parsing starts when local models are enabled
 - the prompt explicitly tells the model to ignore TOC pages, page headers, page footers, page numbers, and single-character heading fragments
 - when MLX parsing fails, the default lightweight fallbacks are `pymupdf_text` and then `pypdf_text`
@@ -185,7 +185,7 @@ The recommended mixed strategy is:
 
 ## 6. What Stays Local in Hybrid Mode
 
-In the recommended `hybrid + apple_lite_mlx` setup, these usually stay local:
+In the recommended `hybrid + apple_silicon` setup, these usually stay local:
 
 - query classification
 - query decomposition

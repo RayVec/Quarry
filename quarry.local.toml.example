@@ -18,9 +18,9 @@
 mode = "hybrid"
 
 # profile: selects the local model stack
-#   apple_lite_mlx          — MLX-based Qwen models; best for Apple Silicon
-#   full_local_transformers — standard HuggingFace models; for Linux/Windows with a GPU
-profile = "apple_lite_mlx"
+#   apple_silicon          — MLX-based Qwen models; best for Apple Silicon
+#   gpu — standard HuggingFace models; for Linux/Windows with a GPU
+profile = "apple_silicon"
 
 # Set to false to disable ALL local model loading (useful in hosted-only setups)
 use_local_models = true
@@ -64,7 +64,7 @@ use_live_decomposition         = false  # query decomposition (local is usually 
 use_live_metadata_enrichment   = false  # chunk metadata enrichment (local is usually fine)
 
 # ---------------------------------------------------------------------------
-# MLX local models (used when profile = "apple_lite_mlx")
+# MLX local models (used when profile = "apple_silicon")
 # ---------------------------------------------------------------------------
 [mlx]
 
@@ -81,7 +81,7 @@ max_new_tokens = 768
 page_image_dim = 1024
 
 # ---------------------------------------------------------------------------
-# Local transformer models (used when profile = "full_local_transformers")
+# Local transformer models (used when profile = "gpu")
 # ---------------------------------------------------------------------------
 [local_models]
 
@@ -100,8 +100,8 @@ nli_model = "khalidalt/DeBERTa-v3-large-mnli"
 [parser]
 
 # Primary PDF parser:
-#   mlx_vlm              — MLX vision parser (set automatically for apple_lite_mlx)
-#   olmocr_transformers  — olmOCR transformers path (full_local_transformers default)
+#   mlx_vlm              — MLX vision parser (set automatically for apple_silicon)
+#   olmocr_transformers  — olmOCR transformers path (gpu default)
 #   pymupdf_text         — lightweight text extraction (fast, lossy)
 #   pypdf_text           — fallback text extraction
 primary = "mlx_vlm"

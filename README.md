@@ -15,8 +15,8 @@ QUARRY is a local-first grey literature retrieval and review system for small, c
 |---|---|
 | Python | 3.13+ |
 | Node.js | 18+ |
-| Apple Silicon | Recommended (for `apple_lite_mlx` profile) |
-| GPU (CUDA) | Optional (for `full_local_transformers` profile) |
+| Apple Silicon | Recommended (for `apple_silicon` profile) |
+| GPU (CUDA) | Optional (for `gpu` profile) |
 
 ---
 
@@ -70,17 +70,17 @@ Then open `quarry.local.toml` and fill in the values for your setup. The example
 
 | Profile | Hardware | Local model stack |
 |---|---|---|
-| `apple_lite_mlx` | Apple Silicon (M1/M2/M3/M4) | MLX Qwen 4B text + MLX Qwen-VL 4B vision parser |
-| `full_local_transformers` | Linux / Windows with a GPU | HuggingFace Qwen 7B text + olmOCR 7B vision parser |
+| `apple_silicon` | Apple Silicon (M1/M2/M3/M4) | MLX Qwen 4B text + MLX Qwen-VL 4B vision parser |
+| `gpu` | Linux / Windows with a GPU | HuggingFace Qwen 7B text + olmOCR 7B vision parser |
 
-> **Auto-detection:** QUARRY defaults to `apple_lite_mlx` on Apple Silicon and `full_local_transformers` on everything else. You can override with `runtime.profile` in your TOML.
+> **Auto-detection:** QUARRY defaults to `apple_silicon` on Apple Silicon and `gpu` on everything else. You can override with `runtime.profile` in your TOML.
 
 ### Recommended hybrid setup (Apple Silicon + hosted generation)
 
 ```toml
 [runtime]
 mode = "hybrid"
-profile = "apple_lite_mlx"
+profile = "apple_silicon"
 
 [hosted]
 llm_base_url = "https://openrouter.ai/api/v1"
@@ -96,7 +96,7 @@ This keeps decomposition, retrieval, reranking, PDF parsing, and NLI verificatio
 ```toml
 [runtime]
 mode = "local"
-profile = "apple_lite_mlx"
+profile = "apple_silicon"
 
 [hosted]
 use_live_generation = false
@@ -151,7 +151,7 @@ source .venv/bin/activate
 
 quarry start                          # interactive rebuild prompt + serve
 quarry start --skip-corpus            # skip rebuild, serve existing artifacts
-quarry start --profile apple_lite_mlx # override profile at launch
+quarry start --profile apple_silicon # override profile at launch
 quarry ingest data/sources/*.pdf      # ingest only, no server
 quarry rebuild-indexes                # rebuild vector + sparse indexes only
 quarry warm-local-models              # download and verify all local models

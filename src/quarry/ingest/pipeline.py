@@ -51,7 +51,7 @@ def ensure_parser_ready(settings: Settings) -> None:
     warm_local_models(settings)
     if not is_local_component_ready(settings, "parser"):
         raise RuntimeError(
-            "The configured MLX parser is not ready. Run `quarry warm-local-models --profile apple_lite_mlx` "
+            "The configured MLX parser is not ready. Run `quarry warm-local-models --profile apple_silicon` "
             "and resolve parser warmup errors before ingesting documents."
         )
 
@@ -87,7 +87,7 @@ def build_parsing_pipeline(settings: Settings) -> ParsingPipeline:
 
 def build_parser_adapter(name: str, settings: Settings):
     normalized = name.strip().lower()
-    if normalized in {"apple_lite_mlx", "qwen3_vl_mlx", "mlx_vlm"}:
+    if normalized in {"apple_silicon", "qwen3_vl_mlx", "mlx_vlm"}:
         return Qwen3VLMlxParserAdapter(
             model_name=settings.mlx_vision_model_name,
             target_longest_image_dim=settings.mlx_page_image_dim,

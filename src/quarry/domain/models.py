@@ -67,8 +67,8 @@ class RuntimeMode(str, Enum):
 
 
 class RuntimeProfile(str, Enum):
-    APPLE_LITE_MLX = "apple_lite_mlx"
-    FULL_LOCAL_TRANSFORMERS = "full_local_transformers"
+    APPLE_LITE_MLX = "apple_silicon"
+    FULL_LOCAL_TRANSFORMERS = "gpu"
 
 
 class UIMessageLevel(str, Enum):

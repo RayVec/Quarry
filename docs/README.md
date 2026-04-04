@@ -83,7 +83,7 @@ Important config sections:
 
 - `[runtime]`
   - `mode = "hybrid" | "local" | "hosted"`
-  - `profile = "apple_lite_mlx" | "full_local_transformers"`
+  - `profile = "apple_silicon" | "gpu"`
 - `[hosted]`
   - `llm_base_url`
   - `llm_api_key`
@@ -104,7 +104,7 @@ Important config sections:
 The easiest mixed setup is:
 
 - `runtime.mode = "hybrid"`
-- `runtime.profile = "apple_lite_mlx"`
+- `runtime.profile = "apple_silicon"`
 - `hosted.use_live_generation = true`
 - `hosted.use_live_decomposition = false`
 - `hosted.use_live_metadata_enrichment = false`
@@ -129,11 +129,11 @@ That gives you:
 
 ## Runtime Profiles
 
-- `apple_lite_mlx`
+- `apple_silicon`
   - default on Apple Silicon
   - MLX Qwen text + MLX Qwen vision parser
   - parser is model-first for PDFs
-- `full_local_transformers`
+- `gpu`
   - for Linux / Windows machines with a GPU
   - standard HuggingFace Qwen 7B text model + olmOCR 7B vision parser
   - models are larger and slower than the MLX equivalents
@@ -154,7 +154,7 @@ If you add or change documents, rebuild from `data/sources/` before asking new q
 Important parser behavior:
 
 - QUARRY does not intentionally skip the Apple MLX parser just because a warmup status file is missing or stale
-- when `apple_lite_mlx` is active and local models are enabled, ingest tries the MLX parser first
+- when `apple_silicon` is active and local models are enabled, ingest tries the MLX parser first
 - direct ingest also ensures the MLX parser is warmed before parsing begins
 - the default PDF fallback chain is `pymupdf_text` first, then `pypdf_text`
 - those text fallbacks are intentionally lossy and are there to preserve recoverable page text when MLX parsing fails
@@ -184,7 +184,7 @@ Useful variants:
 
 ```bash
 quarry start --skip-corpus
-quarry start --profile apple_lite_mlx
+quarry start --profile apple_silicon
 quarry start --config /path/to/quarry.local.toml
 ```
 

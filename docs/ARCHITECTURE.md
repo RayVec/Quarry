@@ -93,10 +93,10 @@ Review tools remain available, but they appear contextually inside the answer ex
 
 ### 4.2 Runtime profiles
 
-- `apple_lite_mlx`
+- `apple_silicon`
   - Apple Silicon friendly profile
   - MLX-backed local text and MLX vision parsing
-- `full_local_transformers`
+- `gpu`
   - heavier local transformers profile
 
 The runtime mode controls strictness. The runtime profile controls which local model/parser family is preferred.
@@ -190,7 +190,7 @@ Generated outputs:
 
 Parsing depends on runtime profile.
 
-`apple_lite_mlx`:
+`apple_silicon`:
 
 - rasterize PDF pages locally
 - parse with `mlx-community/Qwen3-VL-4B-Instruct-4bit`
@@ -203,7 +203,7 @@ Parsing depends on runtime profile.
 - markdown and text files use `basic_text`
 - fallback usage is logged explicitly
 
-`full_local_transformers`:
+`gpu`:
 
 - prefer the heavier local parser stack, with lightweight PDF text fallbacks by default
 

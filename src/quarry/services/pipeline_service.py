@@ -62,7 +62,7 @@ class PipelineService:
         generation_provider: str = "unknown",
         parser_provider: str = "unknown",
         runtime_mode: str = "hybrid",
-        runtime_profile: str = "full_local_transformers",
+        runtime_profile: str = "gpu",
         local_model_status: dict[str, str] | None = None,
         active_model_ids: list[str] | None = None,
     ) -> None:

@@ -30,7 +30,7 @@ def is_apple_silicon_host() -> bool:
 
 
 def default_runtime_profile() -> str:
-    return "apple_lite_mlx" if is_apple_silicon_host() else "full_local_transformers"
+    return "apple_silicon" if is_apple_silicon_host() else "gpu"
 
 
 def default_config_path() -> Path:
@@ -276,7 +276,7 @@ class Settings:
 
     @property
     def uses_mlx_profile(self) -> bool:
-        return self.runtime_profile == "apple_lite_mlx"
+        return self.runtime_profile == "apple_silicon"
 
     @property
     def parser_provider(self) -> str:

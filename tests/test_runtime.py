@@ -29,7 +29,7 @@ def test_create_app_refuses_unwarmed_local_apple_profile_without_parser_status(t
         corpus_dir=tmp_path / "corpus",
         artifacts_dir=tmp_path / "artifacts",
         runtime_mode="local",
-        runtime_profile="apple_lite_mlx",
+        runtime_profile="apple_silicon",
         use_local_models=True,
     )
     settings.corpus_dir.mkdir(parents=True, exist_ok=True)
@@ -37,7 +37,7 @@ def test_create_app_refuses_unwarmed_local_apple_profile_without_parser_status(t
     (settings.artifacts_dir / "local_model_status.json").write_text(
         json.dumps(
             {
-                "runtime_profile": "apple_lite_mlx",
+                "runtime_profile": "apple_silicon",
                 "parser_provider": settings.parser_provider,
                 "embedding": "ready:intfloat/e5-large-v2",
                 "reranker": "ready:BAAI/bge-reranker-v2-m3",
@@ -57,7 +57,7 @@ def test_runtime_hosts_generation_while_leaving_decomposition_local(tmp_path: Pa
     settings = Settings(
         corpus_dir=tmp_path / "corpus",
         artifacts_dir=tmp_path / "artifacts",
-        runtime_profile="apple_lite_mlx",
+        runtime_profile="apple_silicon",
         runtime_mode="hybrid",
         use_local_models=True,
         use_live_generation=True,
