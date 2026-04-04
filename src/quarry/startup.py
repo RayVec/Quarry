@@ -182,7 +182,7 @@ def serve_backend(
     configure_logging(settings.artifacts_dir.parent / "logs", enable_file_logs=settings.trace_logs, category="runtime")
     echo("Starting QUARRY backend...")
     echo(f"Project: {_project_root()}")
-    display_config = Path(config_path).resolve() if config_path else (_project_root() / "quarry.local.toml").resolve()
+    display_config = Path(config_path).resolve() if config_path else (_project_root() / "config.toml").resolve()
     echo(f"Config: {display_config}")
     echo(f"Sources: {prep['sources_dir']}")
     runtime_log = current_log_file("runtime")
@@ -201,7 +201,7 @@ def serve_backend(
 
 def build_start_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="python start_backend.py")
-    parser.add_argument("--config", help="Path to a TOML config file. Defaults to quarry.local.toml when present.")
+    parser.add_argument("--config", help="Path to a TOML config file. Defaults to config.toml when present.")
     parser.add_argument(
         "--profile",
         choices=["apple_silicon", "gpu"],

@@ -134,7 +134,7 @@ Important configuration groups:
 Config resolution order:
 
 1. defaults
-2. `quarry.local.toml`
+2. `config.toml`
 3. environment variable overrides
 
 ### 5.2 Startup flow

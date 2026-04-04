@@ -52,7 +52,7 @@ def test_legacy_runtime_mode_names_are_rejected(monkeypatch) -> None:
 
 
 def test_settings_from_toml_config_file(tmp_path) -> None:
-    config_path = tmp_path / "quarry.local.toml"
+    config_path = tmp_path / "config.toml"
     config_path.write_text(
         """
 [runtime]
@@ -79,7 +79,7 @@ use_live_decomposition = false
 
 
 def test_env_vars_override_toml_config(tmp_path, monkeypatch) -> None:
-    config_path = tmp_path / "quarry.local.toml"
+    config_path = tmp_path / "config.toml"
     config_path.write_text(
         """
 [runtime]

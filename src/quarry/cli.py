@@ -23,7 +23,7 @@ def add_profile_argument(parser: argparse.ArgumentParser) -> None:
 def add_config_argument(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--config",
-        help="Path to a TOML config file. Defaults to quarry.local.toml when present.",
+        help="Path to a TOML config file. Defaults to config.toml when present.",
     )
 
 

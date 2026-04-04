@@ -34,7 +34,7 @@ def default_runtime_profile() -> str:
 
 
 def default_config_path() -> Path:
-    return Path("quarry.local.toml")
+    return Path("config.toml")
 
 
 def validate_runtime_mode(value: str | None) -> str:

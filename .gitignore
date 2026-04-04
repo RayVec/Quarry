@@ -37,5 +37,5 @@ data/corpus/*
 output/*
 !output/.gitkeep
 
-# Local config — copy config.example.toml → quarry.local.toml and fill in your values
-quarry.local.toml
+# Local config — copy config.example.toml → config.toml and fill in your values
+config.toml

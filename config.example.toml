@@ -1,7 +1,7 @@
-# quarry.local.toml.example
+# config.toml.example
 #
-# Copy this file to quarry.local.toml and fill in the values for your setup.
-# quarry.local.toml is gitignored and should never be committed.
+# Copy this file to config.toml and fill in the values for your setup.
+# config.toml is gitignored and should never be committed.
 #
 # Config is also readable from environment variables (see docs/README.md).
 # TOML sections map to QUARRY_* env vars; this file is the preferred day-to-day path.

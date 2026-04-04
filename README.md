@@ -50,13 +50,13 @@ npm install
 
 ## Configuration
 
-QUARRY reads its runtime config from `quarry.local.toml`. This file is **gitignored** and must be created locally by each user.
+QUARRY reads its runtime config from `config.toml`. This file is **gitignored** and must be created locally by each user.
 
 ```bash
-cp config.example.toml quarry.local.toml
+cp config.example.toml config.toml
 ```
 
-Then open `quarry.local.toml` and fill in the values for your setup. The example file is fully annotated.
+Then open `config.toml` and fill in the values for your setup. The example file is fully annotated.
 
 ### Runtime modes
 

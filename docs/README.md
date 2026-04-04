@@ -40,7 +40,7 @@ npm install
 Normal local workflow:
 
 1. Put source documents in `data/sources/`
-2. Fill in `quarry.local.toml`
+2. Fill in `config.toml`
 3. Start the backend
 4. Start the frontend
 
@@ -75,7 +75,7 @@ Open:
 
 QUARRY reads local config from:
 
-- `quarry.local.toml`
+- `config.toml`
 
 Environment variables still work, but the TOML file is the intended day-to-day setup path.
 
@@ -185,7 +185,7 @@ Useful variants:
 ```bash
 quarry start --skip-corpus
 quarry start --profile apple_silicon
-quarry start --config /path/to/quarry.local.toml
+quarry start --config /path/to/config.toml
 ```
 
 ## Current Query Experience
