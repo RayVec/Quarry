@@ -234,10 +234,12 @@ Important current behavior:
 - single-hop generation also trims citation context to the strongest passages
 - exact quote verification still runs after generation
 - NLI confidence scoring still runs after exact-match verification
+- when hosted or local generation falls back, QUARRY now emits conservative `[NO_REF]` output instead of fabricating a sentence from raw chunk text
 - lingering ungrounded `CLAIM` sentences are removed from the final response instead of being shown as unsupported facts
 - lingering ungrounded `SYNTHESIS` sentences are also removed from the final response
 - regeneration now avoids repeated retries when the model is converging on the same failed sentence
 - retries that do happen now include the previous failed rewrite and an explicit `[NO_REF]` escape path
+- sentence repair prompts can use shorter exact quotes (8 to 10 words) so regenerated prose can stay natural, while initial generation still uses 10 to 40 word anchors
 
 ## Logging
 

@@ -1,8 +1,11 @@
 from __future__ import annotations
 
-from quarry.adapters.in_memory import extract_exact_quote
+import re
+
 from quarry.adapters.interfaces import GenerationClient
 from quarry.domain.models import CitationIndexEntry, GenerationRequest, ParsedSentence, SentenceType
+
+INLINE_REF_PATTERN = re.compile(r"\[(?:REF:[^\]]+|NO_REF)\]")
 
 
 class AnswerGenerator:
@@ -30,31 +33,11 @@ class SentenceRegenerator:
             failed_regeneration_response=failed_regeneration_response,
         )
 
-    def deterministic_rewrite(self, sentence: ParsedSentence, citation_index: list[CitationIndexEntry]) -> str:
-        ranked_citations = self._rank_citations(sentence, citation_index)
-        if not ranked_citations:
-            return f"[{sentence.sentence_type.value.upper()}] {sentence.sentence_text} [NO_REF]"
-
-        if sentence.sentence_type == SentenceType.SYNTHESIS:
-            selected = [citation for citation in ranked_citations[:2] if len(extract_exact_quote(citation.text).split()) >= 15]
-            if len(selected) < 2:
-                return f"[SYNTHESIS] {sentence.sentence_text} [NO_REF]"
-            first_quote = extract_exact_quote(selected[0].text).replace('"', "'")
-            second_quote = extract_exact_quote(selected[1].text).replace('"', "'")
-            return (
-                "[SYNTHESIS] Taken together, the available passages support a cross-section reading of the evidence. "
-                f'[REF: "{first_quote}"] '
-                f'[REF: "{second_quote}"]'
-            )
-
-        best = ranked_citations[0]
-        quote = extract_exact_quote(best.text).replace('"', "'")
-        if len(quote.split()) < 15:
-            return f"[CLAIM] {sentence.sentence_text} [NO_REF]"
-        claim_text = quote[0].upper() + quote[1:]
-        if not claim_text.endswith("."):
-            claim_text += "."
-        return f'[CLAIM] {claim_text} [REF: "{quote}"]'
+    def deterministic_rewrite(self, sentence: ParsedSentence, _citation_index: list[CitationIndexEntry]) -> str:
+        fallback_text = self._clean_sentence_text(sentence.sentence_text)
+        if not fallback_text:
+            fallback_text = "This sentence could not be grounded in the available evidence."
+        return f"[{sentence.sentence_type.value.upper()}] {fallback_text} [NO_REF]"
 
     def _rank_citations(self, sentence: ParsedSentence, citation_index: list[CitationIndexEntry]) -> list[CitationIndexEntry]:
         return sorted(
@@ -67,3 +50,8 @@ class SentenceRegenerator:
         sentence_terms = {token.lower() for token in sentence_text.split()}
         chunk_terms = {token.lower() for token in chunk_text.split()}
         return len(sentence_terms & chunk_terms)
+
+    def _clean_sentence_text(self, text: str) -> str:
+        cleaned = INLINE_REF_PATTERN.sub("", text)
+        cleaned = re.sub(r"\s+", " ", cleaned).strip()
+        return cleaned

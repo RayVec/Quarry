@@ -48,6 +48,16 @@ def extract_exact_quote(text: str, *, min_words: int = 15, max_words: int = 28) 
     return " ".join(words[: min(max_words, len(words))])
 
 
+def no_ref_fallback_response(request: GenerationRequest) -> str:
+    if request.mode == "regeneration":
+        return "[CLAIM] This sentence could not be grounded in the available evidence. [NO_REF]"
+    if request.mode == "supplement":
+        return "[CLAIM] Additional grounded content could not be produced from the available evidence. [NO_REF]"
+    if request.mode == "refinement":
+        return "[CLAIM] The response could not be regenerated from the remaining grounded evidence. [NO_REF]"
+    return "[CLAIM] A grounded answer could not be produced from the available evidence. [NO_REF]"
+
+
 class InMemoryChunkStore(ChunkStore):
     def __init__(self, chunks: Iterable[ChunkObject]) -> None:
         self._chunks = list(chunks)
@@ -302,6 +312,11 @@ class DeterministicGenerationClient(GenerationClient):
         return "\n\n".join(lines)
 
 
+class ConservativeFallbackGenerationClient(GenerationClient):
+    async def generate(self, request: GenerationRequest) -> str:
+        return no_ref_fallback_response(request)
+
+
 class HeuristicNLIClient(NLIClient):
     async def score(self, sentence_text: str, chunk_texts: Sequence[str]) -> list[ScoredReference]:
         sentence_terms = set(tokenize(sentence_text))
@@ -311,7 +326,13 @@ class HeuristicNLIClient(NLIClient):
             if not sentence_terms or not chunk_terms:
                 scores.append(ScoredReference(score=None, label=None))
                 continue
-            overlap = len(sentence_terms & chunk_terms) / max(len(sentence_terms), 1)
+            intersection = len(sentence_terms & chunk_terms)
+            # Use the more generous direction (max of precision/recall) so that
+            # paraphrased or slightly reworded sentences are not unfairly penalised
+            # when their vocabulary largely overlaps with the source chunk.
+            precision = intersection / max(len(sentence_terms), 1)
+            recall = intersection / max(len(chunk_terms), 1)
+            overlap = max(precision, recall)
             if overlap >= 0.7:
                 label = ConfidenceLabel.SUPPORTED
             elif overlap >= 0.4:

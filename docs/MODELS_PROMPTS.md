@@ -131,6 +131,13 @@ Used for:
 - support scoring after exact quote verification
 - assigning `supported`, `partially_supported`, or `not_supported`
 
+Scoring policy:
+
+- Argmax over softmax probabilities maps `entailment → supported`, `neutral → partially_supported`, `contradiction → not_supported`.
+- **Soft entailment threshold:** if the argmax lands on `neutral` but the raw entailment probability is ≥ `0.35` (`ENTAILMENT_SOFT_THRESHOLD`), the label is upgraded to `supported`. This handles near-verbatim rewrites where probability mass is split between entailment and neutral without a decisive winner.
+
+On Apple Silicon the model is replaced by `HeuristicNLIClient`, which scores token-set overlap as `max(precision, recall)` (see Architecture §7.7).
+
 ## 4. Non-model Retrieval Components
 
 ### Sparse retrieval
@@ -353,6 +360,7 @@ Rules:
 - `CLAIM`
   - one factual sentence
   - exactly one verbatim quote
+  - standard generation uses a 10 to 40 word quote anchor
 - `SYNTHESIS`
   - combines evidence across passages
   - at least two verbatim quotes from different passages
@@ -390,12 +398,15 @@ It tells the model:
 - which sentence failed citation verification
 - to rewrite only that sentence
 - to use valid evidence from the supplied passages
+- to prefer a clear natural sentence over copied chunk openings, headings, or bullets
+- that shorter exact quotes of 8 to 10 words are allowed during sentence repair
 - to use `[NO_REF]` if no passage supports the claim
 
 Current runtime policy after regeneration:
 
+- if a regenerated sentence still cannot be grounded, QUARRY falls back to `[NO_REF]` rather than fabricating prose from raw chunk text
 - if a `CLAIM` sentence still cannot be grounded after the allowed regeneration attempts, QUARRY removes it from the visible response
-- if a `SYNTHESIS` sentence still cannot be grounded, QUARRY keeps it but marks it for reviewer caution
+- if a `SYNTHESIS` sentence still cannot be grounded after the allowed regeneration attempts, QUARRY also removes it from the visible response
 
 ## 13. Regeneration Retry Guidance
 
@@ -412,7 +423,7 @@ This still could not be verified. Either find a different passage to cite,
 or respond with [NO_REF] if no passage supports this claim.
 ```
 
-This prevents the model from simply repeating the same failed rewrite without new guidance.
+Together with the sentence-repair instructions, this prevents the model from simply repeating the same failed rewrite and gives it room to anchor a cleaner sentence on a shorter exact quote.
 
 Related runtime behavior:
 

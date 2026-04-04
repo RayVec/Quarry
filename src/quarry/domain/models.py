@@ -136,6 +136,7 @@ class CitationIndexEntry(BaseModel):
 
 class Reference(BaseModel):
     reference_quote: str
+    minimum_quote_words: int | None = None
     matched_chunk_id: str | None = None
     verified: bool = False
     confidence_score: float | None = None

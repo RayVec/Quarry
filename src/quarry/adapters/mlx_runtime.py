@@ -10,7 +10,7 @@ from pathlib import Path
 import threading
 from typing import Sequence
 
-from quarry.adapters.in_memory import DeterministicGenerationClient, HeuristicDecompositionClient, HeuristicMetadataEnricher
+from quarry.adapters.in_memory import HeuristicDecompositionClient, HeuristicMetadataEnricher
 from quarry.adapters.interfaces import DecompositionClient, GenerationClient, MetadataEnricher
 from quarry.domain.models import ChunkObject, GenerationRequest
 from quarry.logging_utils import logger_with_trace
@@ -472,7 +472,7 @@ class MLXStructuredGenerationClient(GenerationClient):
         except Exception:
             if self.fallback is None:
                 raise
-            logger.warning("mlx generation fell back to deterministic implementation")
+            logger.warning("mlx generation fell back to conservative no-ref implementation")
             return await self.fallback.generate(request)
 
 

@@ -1,7 +1,7 @@
 import asyncio
 
 from quarry.domain.models import ChunkObject, RetrievedPassage
-from quarry.pipeline.retrieval import HybridRetriever, reciprocal_rank_fusion
+from quarry.pipeline.retrieval import HybridRetriever, build_citation_index, reciprocal_rank_fusion
 
 
 def build_chunk(chunk_id: str, text: str) -> ChunkObject:
@@ -97,3 +97,24 @@ def test_hybrid_retriever_uses_reduced_single_hop_limits() -> None:
     assert len(passages) == 1
     assert sparse.top_ks == [12]
     assert dense.top_ks == [12]
+
+
+def test_build_citation_index_only_marks_top_result_with_global_ambiguity() -> None:
+    chunk_a = build_chunk("a", "modular schedule improvements")
+    chunk_b = build_chunk("b", "procurement delays")
+    chunk_c = build_chunk("c", "safety benefits")
+
+    passages = [
+        RetrievedPassage(chunk=chunk_a, score=0.99, source_facet="facet", rank=1, retriever="reranked"),
+        RetrievedPassage(chunk=chunk_b, score=0.985, source_facet="facet", rank=2, retriever="reranked"),
+        RetrievedPassage(chunk=chunk_c, score=0.91, source_facet="facet", rank=3, retriever="reranked"),
+    ]
+
+    citations = build_citation_index(passages, ambiguity_gap_threshold=0.05)
+
+    assert citations[0].ambiguity_review_required is True
+    assert citations[0].ambiguity_gap == 0.005
+    assert citations[1].ambiguity_review_required is False
+    assert citations[1].ambiguity_gap is None
+    assert citations[2].ambiguity_review_required is False
+    assert citations[2].ambiguity_gap is None

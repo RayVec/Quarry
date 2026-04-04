@@ -40,6 +40,7 @@ def test_generation_prompt_places_context_and_task_before_citation_rules() -> No
     assert "## Citation Format" in prompt
     assert prompt.index("## Source Passages") < prompt.index("## Your Task") < prompt.index("## Citation Format")
     assert "The most important finding or answer comes first" in prompt
+    assert "For standard response generation, use 15 to 40 words" in prompt
 
 
 def test_decomposition_classification_prompt_uses_three_way_schema() -> None:
@@ -132,6 +133,8 @@ def test_generation_prompt_includes_sentence_repair_mode() -> None:
     assert "## Sentence Repair" in prompt
     assert '"Factory fabrication always eliminates delay risk."' in prompt
     assert "Rewrite only this sentence." in prompt
+    assert "shorter exact quotes of 8 to 15 words are allowed" in prompt
+    assert "Write a clear, natural sentence" in prompt
 
 
 def test_generation_prompt_includes_retry_guidance_for_failed_regeneration() -> None:

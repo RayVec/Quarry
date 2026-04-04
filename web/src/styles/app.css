@@ -59,7 +59,12 @@ body,
 body {
   margin: 0;
   min-height: 100vh;
-  background: linear-gradient(180deg, #ffffff 0%, var(--surface) 18%, var(--surface) 100%);
+  background: linear-gradient(
+    180deg,
+    #ffffff 0%,
+    var(--surface) 18%,
+    var(--surface) 100%
+  );
   background-attachment: fixed;
   background-repeat: no-repeat;
   color: var(--on-surface);
@@ -86,7 +91,9 @@ input {
   color: var(--on-surface);
   padding: 0.95rem 1rem;
   box-shadow: inset 0 0 0 1px var(--outline-variant);
-  transition: background-color 180ms ease, box-shadow 180ms ease;
+  transition:
+    background-color 180ms ease,
+    box-shadow 180ms ease;
 }
 
 textarea:focus,
@@ -196,7 +203,10 @@ h3 {
   font-weight: 700;
   cursor: pointer;
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
-  transition: background-color 180ms ease, transform 180ms ease, opacity 180ms ease;
+  transition:
+    background-color 180ms ease,
+    transform 180ms ease,
+    opacity 180ms ease;
 }
 
 .sidebar-primary-action:hover,
@@ -224,7 +234,10 @@ h3 {
 .drawer-close-trigger {
   border-radius: var(--radius-md);
   cursor: pointer;
-  transition: background-color 180ms ease, transform 180ms ease, opacity 180ms ease;
+  transition:
+    background-color 180ms ease,
+    transform 180ms ease,
+    opacity 180ms ease;
 }
 
 .ghost-button,
@@ -350,7 +363,11 @@ h3 {
   background: transparent;
   opacity: 0;
   pointer-events: none;
-  transition: background-color 180ms ease, color 180ms ease, transform 180ms ease, opacity 180ms ease;
+  transition:
+    background-color 180ms ease,
+    color 180ms ease,
+    transform 180ms ease,
+    opacity 180ms ease;
 }
 
 .recent-research-delete svg {
@@ -387,7 +404,9 @@ h3 {
 .recent-research-item.active,
 .recent-research-item:hover {
   background: var(--surface-container-lowest);
-  box-shadow: inset 0 0 0 1px var(--surface-stroke), var(--shadow-ambient);
+  box-shadow:
+    inset 0 0 0 1px var(--surface-stroke),
+    var(--shadow-ambient);
 }
 
 .sidebar-empty {
@@ -507,7 +526,9 @@ h3 {
   background: var(--surface-container-lowest);
   padding: 1rem;
   border-radius: var(--radius-md);
-  box-shadow: inset 0 0 0 1px var(--surface-stroke), var(--shadow-ambient);
+  box-shadow:
+    inset 0 0 0 1px var(--surface-stroke),
+    var(--shadow-ambient);
 }
 
 .composer-surface.singleline {
@@ -652,7 +673,9 @@ h3 {
 .message-row,
 .diagnostic-row {
   background: var(--surface-container-lowest);
-  box-shadow: inset 0 0 0 1px var(--surface-stroke), var(--shadow-ambient);
+  box-shadow:
+    inset 0 0 0 1px var(--surface-stroke),
+    var(--shadow-ambient);
 }
 
 .response-empty-state {
@@ -814,7 +837,10 @@ h3 {
   background: rgba(244, 246, 255, 0.74);
   color: var(--secondary);
   box-shadow: inset 0 0 0 1px var(--outline-variant);
-  transition: background-color 180ms ease, transform 180ms ease, opacity 180ms ease;
+  transition:
+    background-color 180ms ease,
+    transform 180ms ease,
+    opacity 180ms ease;
 }
 
 .inline-flag-button svg {
@@ -860,7 +886,10 @@ h3 {
   font-size: 0.82rem;
   font-weight: 700;
   vertical-align: middle;
-  transition: background-color 180ms ease, transform 180ms ease, box-shadow 180ms ease;
+  transition:
+    background-color 180ms ease,
+    transform 180ms ease,
+    box-shadow 180ms ease;
 }
 
 .citation-pill:hover,
@@ -927,6 +956,7 @@ h3 {
   inset: 0;
   background: rgba(15, 23, 42, 0.24);
   z-index: 30;
+  overscroll-behavior: contain;
 }
 
 .diagnostics-drawer,
@@ -935,6 +965,7 @@ h3 {
   inset: 1rem 1rem 1rem auto;
   width: min(35rem, calc(100vw - 2rem));
   overflow-y: auto;
+  overscroll-behavior: contain;
   z-index: 31;
   padding: 1.2rem;
   background: var(--surface-variant);
@@ -966,37 +997,128 @@ h3 {
   box-shadow: inset 0 0 0 1px var(--surface-stroke);
 }
 
+.citation-drawer-doc-page-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+  gap: 1rem;
+  align-items: stretch;
+}
+
+.citation-drawer-doc-page-column {
+  display: grid;
+  gap: 1rem;
+  min-width: 0;
+  height: 100%;
+  align-content: stretch;
+}
+
+.citation-drawer-doc-page-row > .citation-drawer-info-card,
+.citation-drawer-doc-page-column .citation-drawer-info-card {
+  min-width: 0;
+  height: 100%;
+  align-content: start;
+}
+
+.citation-drawer-info-card--match-quality {
+  grid-template-rows: auto 1fr;
+  gap: 0;
+}
+
+.citation-drawer-info-value {
+  margin: 0;
+  font-size: 0.95rem;
+  line-height: 1.55;
+  color: var(--on-surface);
+}
+
+.citation-drawer-info-card .retrieval-strength {
+  margin-top: 0.2rem;
+}
+
+.citation-drawer-info-card--match-quality .retrieval-strength {
+  height: 100%;
+  display: grid;
+  align-content: center;
+  justify-self: center;
+  width: fit-content;
+  max-width: 100%;
+  margin-top: 0;
+}
+
 .retrieval-human {
   display: grid;
   gap: 0.85rem;
 }
 
 .retrieval-strength {
-  padding: 0.75rem 0.85rem;
-  border-radius: var(--radius-md);
-  border-left: 0.28rem solid var(--outline-variant);
-  background: rgba(255, 255, 255, 0.55);
+  --retrieval-accent: var(--secondary);
+  --retrieval-ink: var(--secondary);
+  --retrieval-icon-surface: color-mix(in srgb, var(--retrieval-accent) 10%, white);
+  --retrieval-icon-stroke: color-mix(in srgb, var(--retrieval-accent) 18%, white);
+  --retrieval-icon-color: var(--retrieval-accent);
+  padding: 0;
+  border: none;
+  background: transparent;
+  box-shadow: none;
 }
 
 .retrieval-strength--strong {
-  border-left-color: var(--tertiary);
+  --retrieval-accent: #047857;
+  --retrieval-ink: var(--on-tertiary-fixed-variant);
+  --retrieval-icon-surface: var(--tertiary);
+  --retrieval-icon-stroke: #047857;
+  --retrieval-icon-color: #ffffff;
 }
 
 .retrieval-strength--good {
-  border-left-color: var(--primary-fixed);
+  --retrieval-accent: #0f8a68;
+  --retrieval-ink: #0b5d48;
+  --retrieval-icon-surface: color-mix(in srgb, var(--tertiary-fixed) 56%, white);
+  --retrieval-icon-stroke: color-mix(in srgb, #0f8a68 24%, white);
 }
 
 .retrieval-strength--fair {
-  border-left-color: var(--warning-accent);
+  --retrieval-accent: var(--warning-accent);
+  --retrieval-ink: var(--warning-ink);
+  --retrieval-icon-surface: color-mix(in srgb, var(--warning-accent) 16%, white);
+  --retrieval-icon-stroke: color-mix(in srgb, var(--warning-accent) 28%, white);
 }
 
 .retrieval-strength--weak {
-  border-left-color: var(--error-ink);
-  background: var(--error-surface);
+  --retrieval-accent: var(--error-ink);
+  --retrieval-ink: var(--error-ink);
+  --retrieval-icon-surface: color-mix(in srgb, var(--error-ink) 14%, white);
+  --retrieval-icon-stroke: color-mix(in srgb, var(--error-ink) 24%, white);
+}
+
+.retrieval-strength-headline-row {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+}
+
+.retrieval-strength-icon {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 1.6rem;
+  height: 1.6rem;
+  border-radius: 999px;
+  background: var(--retrieval-icon-surface);
+  box-shadow: inset 0 0 0 1px var(--retrieval-icon-stroke);
+  color: var(--retrieval-icon-color);
+}
+
+.retrieval-strength-icon svg {
+  width: 1rem;
+  height: 1rem;
 }
 
 .retrieval-strength-headline {
   margin: 0;
+  flex: 1;
+  min-width: 0;
   font-family: "Manrope", "Inter", sans-serif;
   font-weight: 700;
   font-size: 1.05rem;
@@ -1005,7 +1127,7 @@ h3 {
 }
 
 .retrieval-strength-detail {
-  margin: 0.35rem 0 0;
+  margin: 0.42rem 0 0;
   font-size: 0.9rem;
   line-height: 1.55;
   color: var(--muted);
@@ -1019,6 +1141,28 @@ h3 {
 
 .quoted-passage {
   line-height: 1.8;
+}
+
+.quoted-passage-viewport {
+  max-height: 50vh;
+  overflow: hidden;
+}
+
+.quoted-passage-viewport--expanded {
+  max-height: none;
+  overflow: visible;
+}
+
+.quoted-passage-toggle {
+  margin-top: 0.45rem;
+  font-weight: 600;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 0.12em;
+}
+
+.quoted-passage-toggle:hover {
+  color: var(--primary);
 }
 
 .quoted-passage mark {
@@ -1228,6 +1372,10 @@ h3 {
 
   .inline-flag-button {
     opacity: 1;
+  }
+
+  .citation-drawer-doc-page-row {
+    grid-template-columns: 1fr;
   }
 
   .diagnostics-drawer,

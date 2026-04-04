@@ -9,7 +9,7 @@ from typing import Sequence
 import numpy as np
 
 from quarry.adapters.in_memory import (
-    DeterministicGenerationClient,
+    ConservativeFallbackGenerationClient,
     HashEmbeddingClient,
     HeuristicDecompositionClient,
     HeuristicMetadataEnricher,
@@ -270,14 +270,14 @@ class LocalStructuredMetadataEnricher(MetadataEnricher):
 class LocalStructuredGenerationClient(GenerationClient):
     def __init__(self, backend: LocalTextCompletionBackend, fallback: GenerationClient | None = None) -> None:
         self.backend = backend
-        self.fallback = fallback or DeterministicGenerationClient()
+        self.fallback = fallback or ConservativeFallbackGenerationClient()
 
     async def generate(self, request: GenerationRequest) -> str:
         try:
             max_tokens = 384 if request.mode == "regeneration" else self.backend.default_max_new_tokens
             return await self.backend.complete(generation_prompt(request), temperature=0.2, max_new_tokens=max_tokens, operation=f"generation:{request.mode}")
         except Exception:
-            logger.warning("local generation fell back to deterministic implementation")
+            logger.warning("local generation fell back to conservative no-ref implementation")
             return await self.fallback.generate(request)
 
 
@@ -537,6 +537,12 @@ class LocalCrossEncoderReranker(Reranker):
 
 
 class LocalMNLIClient(NLIClient):
+    # When the argmax lands on "neutral" but the raw entailment probability is
+    # at or above this threshold, we still treat the pair as SUPPORTED.  This
+    # handles paraphrased or slightly reworded sentences where the model splits
+    # probability mass between entailment and neutral without a clear winner.
+    ENTAILMENT_SOFT_THRESHOLD = 0.35
+
     def __init__(
         self,
         model_name: str,
@@ -604,7 +610,7 @@ class LocalMNLIClient(NLIClient):
             predicted = probabilities.argmax(axis=-1)
             for row, predicted_idx in zip(probabilities, predicted):
                 entailment_score = float(row[entail_idx])
-                if predicted_idx == entail_idx:
+                if predicted_idx == entail_idx or entailment_score >= self.ENTAILMENT_SOFT_THRESHOLD:
                     label = ConfidenceLabel.SUPPORTED
                 elif predicted_idx == neutral_idx:
                     label = ConfidenceLabel.PARTIALLY_SUPPORTED

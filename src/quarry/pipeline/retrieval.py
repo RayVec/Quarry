@@ -265,9 +265,9 @@ class HybridRetriever:
 def build_citation_index(passages: Sequence[RetrievedPassage], *, starting_id: int = 1, ambiguity_gap_threshold: float = 0.05) -> list[CitationIndexEntry]:
     citations: list[CitationIndexEntry] = []
     gap = _score_gap(passages)
-    ambiguity = gap is not None and gap < ambiguity_gap_threshold
     for offset, passage in enumerate(passages):
         chunk = passage.chunk
+        top_result_is_ambiguous = offset == 0 and gap is not None and gap < ambiguity_gap_threshold
         citations.append(
             CitationIndexEntry(
                 citation_id=starting_id + offset,
@@ -281,11 +281,11 @@ def build_citation_index(passages: Sequence[RetrievedPassage], *, starting_id: i
                 page_end=chunk.page_end,
                 retrieval_score=passage.score,
                 source_facet=passage.source_facet,
-            ambiguity_review_required=ambiguity,
-            ambiguity_gap=gap,
-            retrieval_scores={passage.retriever: passage.score},
+                ambiguity_review_required=top_result_is_ambiguous,
+                ambiguity_gap=gap if offset == 0 else None,
+                retrieval_scores={passage.retriever: passage.score},
+            )
         )
-    )
     return citations
 
 

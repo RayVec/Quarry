@@ -175,3 +175,45 @@ def test_verifier_caches_confidence_scores_for_unchanged_pairs() -> None:
     assert first[0].status == SentenceStatus.VERIFIED
     assert second[0].status == SentenceStatus.VERIFIED
     assert nli.calls == 1
+
+
+def test_verifier_allows_shorter_quotes_when_reference_sets_minimum_words() -> None:
+    chunk = build_chunk(
+        "short",
+        "Factory fabrication reduced weather delays during installation and stabilized handoff planning across the team.",
+    )
+    store = InMemoryChunkStore([chunk])
+    verifier = VerificationService(chunk_store=store, nli_client=HeuristicNLIClient())
+    parsed = [
+        ParsedSentence(
+            sentence_index=0,
+            sentence_text="Factory fabrication reduced weather delays during installation.",
+            sentence_type=SentenceType.CLAIM,
+            references=[
+                Reference(
+                    reference_quote="Factory fabrication reduced weather delays during installation and stabilized",
+                    minimum_quote_words=8,
+                )
+            ],
+            status=SentenceStatus.UNCHECKED,
+        )
+    ]
+    citations = [
+        CitationIndexEntry(
+            citation_id=1,
+            chunk_id="short",
+            text=chunk.text,
+            document_id=chunk.document_id,
+            document_title=chunk.document_title,
+            section_heading=chunk.section_heading,
+            section_path=chunk.section_path,
+            page_number=chunk.page_start,
+            retrieval_score=0.9,
+            source_facet="factory fabrication",
+        )
+    ]
+
+    verified = verifier.verify_exact_matches(parsed, citations)
+
+    assert verified.parsed_sentences[0].references[0].verified is True
+    assert verified.parsed_sentences[0].status == SentenceStatus.UNCHECKED

@@ -15,6 +15,7 @@ from quarry.domain.models import (
     FacetGapRequest,
     FeedbackState,
     GenerationRequest,
+    ParsedSentence,
     QueryRequest,
     QueryProgressStage,
     QueryRunStatus,
@@ -45,6 +46,7 @@ logger = logger_with_trace(__name__)
 class PipelineService:
     SINGLE_HOP_GENERATION_MAX_CITATIONS = 8
     REGENERATION_SIMILARITY_THRESHOLD = 0.8
+    REGENERATION_MIN_QUOTE_WORDS = 8
 
     def __init__(
         self,
@@ -803,11 +805,14 @@ class PipelineService:
                 except Exception:
                     regenerated_raw = self.sentence_regenerator.deterministic_rewrite(sentence, updated_citations)
                 replacement = parse_generated_response(regenerated_raw)
-                if not replacement:
-                    replacement = parse_generated_response(self.sentence_regenerator.deterministic_rewrite(sentence, updated_citations))
-                if not replacement:
+                replacement_sentence = self._select_regeneration_replacement(replacement)
+                if replacement_sentence is None:
+                    fallback_raw = self.sentence_regenerator.deterministic_rewrite(sentence, updated_citations)
+                    replacement_sentence = self._select_regeneration_replacement(parse_generated_response(fallback_raw))
+                if replacement_sentence is None:
                     continue
-                replacement_sentence = replacement[-1]
+                for reference in replacement_sentence.references:
+                    reference.minimum_quote_words = self.REGENERATION_MIN_QUOTE_WORDS
                 replacement_sentence.sentence_index = sentence.sentence_index
                 parsed_sentences[sentence.sentence_index] = replacement_sentence
                 changed_indices.add(sentence.sentence_index)
@@ -870,6 +875,20 @@ class PipelineService:
             },
         )
         return render_parsed_sentences(parsed_sentences), parsed_sentences, updated_citations, removed_sentence_count
+
+    def _select_regeneration_replacement(self, replacements: list[ParsedSentence]) -> ParsedSentence | None:
+        usable = [sentence for sentence in replacements if sentence.sentence_text.strip()]
+        if not usable:
+            return None
+        selected = max(
+            usable,
+            key=lambda sentence: (
+                sentence.sentence_type != SentenceType.STRUCTURE,
+                bool(sentence.references) or sentence.status == SentenceStatus.NO_REF,
+                len(sentence.sentence_text.strip()),
+            ),
+        )
+        return selected.model_copy(deep=True)
 
     def _needs_regeneration(self, sentence) -> bool:
         return sentence.status == SentenceStatus.UNGROUNDED and sentence.sentence_type in {SentenceType.CLAIM, SentenceType.SYNTHESIS}
@@ -982,7 +1001,10 @@ class PipelineService:
         removed_sentence_count = 0
         retained_sentences: list = []
         for sentence in parsed_sentences:
-            if sentence.status == SentenceStatus.UNGROUNDED and sentence.sentence_type in {SentenceType.CLAIM, SentenceType.SYNTHESIS}:
+            if sentence.status in {SentenceStatus.UNGROUNDED, SentenceStatus.NO_REF} and sentence.sentence_type in {
+                SentenceType.CLAIM,
+                SentenceType.SYNTHESIS,
+            }:
                 removed_sentence_count += 1
                 continue
             retained_sentences.append(sentence)

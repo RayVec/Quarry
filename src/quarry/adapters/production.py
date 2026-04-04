@@ -9,7 +9,7 @@ from typing import Sequence
 import httpx
 
 from quarry.adapters.in_memory import (
-    DeterministicGenerationClient,
+    ConservativeFallbackGenerationClient,
     HashEmbeddingClient,
     HeuristicDecompositionClient,
     HeuristicMetadataEnricher,
@@ -166,13 +166,13 @@ class HostedMetadataEnricher(MetadataEnricher):
 class HostedGenerationClient(GenerationClient):
     def __init__(self, llm: OpenAICompatibleLLM, fallback: GenerationClient | None = None) -> None:
         self.llm = llm
-        self.fallback = fallback or DeterministicGenerationClient()
+        self.fallback = fallback or ConservativeFallbackGenerationClient()
 
     async def generate(self, request: GenerationRequest) -> str:
         try:
             return await self.llm.complete(generation_prompt(request), temperature=0.2, operation=f"generation:{request.mode}")
         except Exception:
-            logger.warning("generation fell back to deterministic implementation")
+            logger.warning("generation fell back to conservative no-ref implementation")
             return await self.fallback.generate(request)
 
 
@@ -414,14 +414,14 @@ def build_runtime_clients(
         if settings.uses_mlx_profile and (runtime_mode == RuntimeMode.LOCAL or is_local_component_ready(settings, "text")):
             generation = MLXStructuredGenerationClient(
                 ensure_mlx_backend(),
-                fallback=DeterministicGenerationClient() if runtime_mode == RuntimeMode.HYBRID else None,
+                fallback=ConservativeFallbackGenerationClient() if runtime_mode == RuntimeMode.HYBRID else None,
             )
             generation_provider = f"mlx:{settings.mlx_text_model_name}"
             local_status["generation"] = "configured"
             local_status["parser"] = "configured"
         elif settings.uses_mlx_profile:
-            generation = DeterministicGenerationClient()
-            generation_provider = "fallback:deterministic"
+            generation = ConservativeFallbackGenerationClient()
+            generation_provider = "fallback:no_ref"
             local_status["generation"] = "heuristic"
             local_status["parser"] = "heuristic"
         else:
@@ -430,8 +430,8 @@ def build_runtime_clients(
             local_status["generation"] = "configured"
             local_status["parser"] = "configured"
     else:
-        generation = DeterministicGenerationClient()
-        generation_provider = "fallback:deterministic"
+        generation = ConservativeFallbackGenerationClient()
+        generation_provider = "fallback:no_ref"
         local_status["generation"] = "heuristic"
         local_status["parser"] = "heuristic"
 

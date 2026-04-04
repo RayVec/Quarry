@@ -1,9 +1,35 @@
-import { startTransition, useMemo, useState } from "react";
-import { X } from "lucide-react";
+import {
+  startTransition,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import { Check, Minus, Plus, X } from "lucide-react";
 import { api } from "../api";
-import type { CitationIndexEntry, SessionState } from "../types";
+import type { CitationIndexEntry, Reference, SessionState } from "../types";
 import { buildDisplayCitationMap } from "../utils/citationDisplay";
+import { lockBodyScroll, unlockBodyScroll } from "../utils/bodyScrollLock";
+import type { UnifiedMatchLevel } from "../utils/retrievalDisplay";
 import { describeUnifiedMatchQuality } from "../utils/retrievalDisplay";
+
+const MATCH_QUALITY_ICON_SIZE = 18;
+const MATCH_QUALITY_ICON_STROKE = 2.3;
+
+function MatchQualityIcon({ level }: { level: UnifiedMatchLevel }) {
+  const common = { size: MATCH_QUALITY_ICON_SIZE, strokeWidth: MATCH_QUALITY_ICON_STROKE, "aria-hidden": true as const };
+  switch (level) {
+    case "strong":
+      return <Check {...common} />;
+    case "good":
+      return <Plus {...common} />;
+    case "fair":
+      return <Minus {...common} />;
+    default:
+      return <X {...common} />;
+  }
+}
 
 interface CitationDialogProps {
   citation: CitationIndexEntry;
@@ -29,6 +55,53 @@ function highlightReference(text: string, referenceQuote: string) {
   );
 }
 
+function CitationQuotePanel({
+  text,
+  referenceQuote,
+}: {
+  text: string;
+  referenceQuote: string;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const [needsToggle, setNeedsToggle] = useState(false);
+  const measureRef = useRef<HTMLDivElement>(null);
+
+  useLayoutEffect(() => {
+    const el = measureRef.current;
+    if (!el) return;
+    const measure = () => {
+      const maxPx = window.innerHeight * 0.5;
+      setNeedsToggle(el.scrollHeight > maxPx + 1);
+    };
+    measure();
+    window.addEventListener("resize", measure);
+    return () => window.removeEventListener("resize", measure);
+  }, [text, referenceQuote]);
+
+  return (
+    <>
+      <div
+        className={`quoted-passage-viewport ${expanded ? "quoted-passage-viewport--expanded" : ""}`}
+      >
+        <div ref={measureRef}>
+          <p className="quoted-passage">{highlightReference(text, referenceQuote)}</p>
+        </div>
+      </div>
+      {needsToggle ? (
+        <button
+          type="button"
+          className="text-button quoted-passage-toggle"
+          data-testid="citation-quote-read-more"
+          aria-expanded={expanded}
+          onClick={() => setExpanded((value) => !value)}
+        >
+          {expanded ? "Show less" : "Read more"}
+        </button>
+      ) : null}
+    </>
+  );
+}
+
 export function CitationDialog({
   citation,
   sentenceIndex,
@@ -41,22 +114,75 @@ export function CitationDialog({
   const [scopedResults, setScopedResults] = useState<CitationIndexEntry[]>([]);
   const [loadingMore, setLoadingMore] = useState(false);
   const [mismatchNote, setMismatchNote] = useState("");
-  const displayCitationMap = useMemo(() => buildDisplayCitationMap(session), [session]);
-  const displayCitationId = displayCitationMap.get(citation.citation_id) ?? citation.citation_id;
+  const displayCitationMap = useMemo(
+    () => buildDisplayCitationMap(session),
+    [session],
+  );
+  const displayCitationId =
+    displayCitationMap.get(citation.citation_id) ?? citation.citation_id;
+  const sourceSentence = useMemo(
+    () =>
+      session.parsed_sentences.find(
+        (sentence) => sentence.sentence_index === sentenceIndex,
+      ) ?? null,
+    [session.parsed_sentences, sentenceIndex],
+  );
+  const sourceReference = useMemo<Reference | null>(() => {
+    if (!sourceSentence) {
+      return null;
+    }
+    return (
+      sourceSentence.references.find(
+        (reference) =>
+          reference.citation_id === citation.citation_id &&
+          reference.reference_quote === referenceQuote,
+      ) ??
+      sourceSentence.references.find(
+        (reference) => reference.citation_id === citation.citation_id,
+      ) ??
+      sourceSentence.references.find(
+        (reference) => reference.reference_quote === referenceQuote,
+      ) ??
+      null
+    );
+  }, [sourceSentence, citation.citation_id, referenceQuote]);
   const matchQuality = useMemo(
     () =>
       describeUnifiedMatchQuality(
         citation.retrieval_score,
         citation.ambiguity_review_required,
         citation.ambiguity_gap,
+        {
+          sentenceStatus: sourceSentence?.status,
+          referenceVerified: sourceReference?.verified,
+          referenceConfidenceLabel: sourceReference?.confidence_label,
+          referenceConfidenceUnknown: sourceReference?.confidence_unknown,
+        },
       ),
-    [citation.retrieval_score, citation.ambiguity_review_required, citation.ambiguity_gap],
+    [
+      citation.retrieval_score,
+      citation.ambiguity_review_required,
+      citation.ambiguity_gap,
+      sourceSentence?.status,
+      sourceReference?.verified,
+      sourceReference?.confidence_label,
+      sourceReference?.confidence_unknown,
+    ],
   );
+
+  useEffect(() => {
+    lockBodyScroll();
+    return () => unlockBodyScroll();
+  }, []);
 
   async function handleLoadMore() {
     setLoadingMore(true);
     try {
-      const response = await api.scopedRetrieval(session.session_id, sentenceIndex, citation.citation_id);
+      const response = await api.scopedRetrieval(
+        session.session_id,
+        sentenceIndex,
+        citation.citation_id,
+      );
       startTransition(() => {
         setScopedResults(response.citations);
       });
@@ -66,7 +192,12 @@ export function CitationDialog({
   }
 
   async function handleReplace(replacementChunkId: string) {
-    const response = await api.replaceCitation(session.session_id, sentenceIndex, citation.citation_id, replacementChunkId);
+    const response = await api.replaceCitation(
+      session.session_id,
+      sentenceIndex,
+      citation.citation_id,
+      replacementChunkId,
+    );
     startTransition(() => {
       onSessionUpdate(response.session);
       onClose();
@@ -74,7 +205,11 @@ export function CitationDialog({
   }
 
   async function handleMismatch() {
-    const response = await api.addMismatch(session.session_id, citation.citation_id, mismatchNote || undefined);
+    const response = await api.addMismatch(
+      session.session_id,
+      citation.citation_id,
+      mismatchNote || undefined,
+    );
     startTransition(() => {
       onSessionUpdate(response.session);
       setMismatchNote("");
@@ -82,7 +217,10 @@ export function CitationDialog({
   }
 
   async function handleUndoReplacement() {
-    const response = await api.undoReplacement(session.session_id, citation.citation_id);
+    const response = await api.undoReplacement(
+      session.session_id,
+      citation.citation_id,
+    );
     startTransition(() => {
       onSessionUpdate(response.session);
       onClose();
@@ -91,7 +229,11 @@ export function CitationDialog({
 
   return (
     <div className="drawer-backdrop" onClick={onClose}>
-      <aside className="citation-drawer" data-testid="citation-dialog" onClick={(event) => event.stopPropagation()}>
+      <aside
+        className="citation-drawer"
+        data-testid="citation-dialog"
+        onClick={(event) => event.stopPropagation()}
+      >
         <div className="drawer-header">
           <div>
             <span className="eyebrow">Citation [{displayCitationId}]</span>
@@ -110,28 +252,45 @@ export function CitationDialog({
         <div className="drawer-stack">
           <section className="drawer-section">
             <span className="tiny-label">Reference quote in context</span>
-            <p className="quoted-passage">{highlightReference(citation.text, referenceQuote)}</p>
+            <CitationQuotePanel
+              key={citation.citation_id}
+              text={citation.text}
+              referenceQuote={referenceQuote}
+            />
           </section>
 
-          <section className="drawer-section">
-            <span className="tiny-label">Source metadata</span>
-            <p>{citation.document_title}</p>
-            <p>{citation.section_path}</p>
-            <p>
-              page {citation.page_number}
-              {citation.page_end ? `-${citation.page_end}` : ""}
-            </p>
-          </section>
+          <div className="citation-drawer-doc-page-row">
+            <div className="citation-drawer-doc-page-column">
+              <section className="drawer-section citation-drawer-info-card">
+                <span className="tiny-label">Document</span>
+                <p className="citation-drawer-info-value">{citation.document_title}</p>
+              </section>
 
-          <section className="drawer-section">
-            <span className="tiny-label">Match quality</span>
-            <div className="retrieval-human">
-              <div className={`retrieval-strength retrieval-strength--${matchQuality.level}`}>
-                <p className="retrieval-strength-headline">{matchQuality.headline}</p>
+              <section className="drawer-section citation-drawer-info-card">
+                <span className="tiny-label">Page</span>
+                <p className="citation-drawer-info-value">
+                  {citation.page_end != null && citation.page_end !== citation.page_number
+                    ? `${citation.page_number}-${citation.page_end}`
+                    : `${citation.page_number}`}
+                </p>
+              </section>
+            </div>
+
+            <section className="drawer-section citation-drawer-info-card citation-drawer-info-card--match-quality">
+              <span className="tiny-label">Match quality</span>
+              <div
+                className={`retrieval-strength retrieval-strength--${matchQuality.level}`}
+              >
+                <div className="retrieval-strength-headline-row">
+                  <span className="retrieval-strength-icon">
+                    <MatchQualityIcon level={matchQuality.level} />
+                  </span>
+                  <p className="retrieval-strength-headline">{matchQuality.headline}</p>
+                </div>
                 <p className="retrieval-strength-detail">{matchQuality.detail}</p>
               </div>
-            </div>
-          </section>
+            </section>
+          </div>
 
           <section className="drawer-section">
             <div className="drawer-action-row">
@@ -165,7 +324,12 @@ export function CitationDialog({
               onChange={(event) => setMismatchNote(event.target.value)}
               placeholder="Optional note for why this passage does not support the sentence."
             />
-            <button data-testid="save-mismatch" className="ghost-button" disabled={readOnly} onClick={handleMismatch}>
+            <button
+              data-testid="save-mismatch"
+              className="ghost-button"
+              disabled={readOnly}
+              onClick={handleMismatch}
+            >
               Save mismatch
             </button>
           </section>
@@ -183,7 +347,8 @@ export function CitationDialog({
                     onClick={() => handleReplace(result.chunk_id)}
                   >
                     <span className="candidate-meta">
-                      {result.document_title} · {result.section_heading} · p. {result.page_number}
+                      {result.document_title} · {result.section_heading} · p.{" "}
+                      {result.page_number}
                     </span>
                     <span>{result.text}</span>
                   </button>

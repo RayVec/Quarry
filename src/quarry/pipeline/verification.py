@@ -16,6 +16,7 @@ def normalize_whitespace(text: str) -> str:
 
 class VerificationService:
     CONFIDENCE_CACHE_MAX_ENTRIES = 4096
+    DEFAULT_MIN_QUOTE_WORDS = 10
 
     def __init__(self, *, chunk_store: ChunkStore, nli_client: NLIClient) -> None:
         self.chunk_store = chunk_store
@@ -60,7 +61,8 @@ class VerificationService:
                 reference.confidence_unknown = False
                 reference.citation_id = None
 
-                if len(normalize_whitespace(reference.reference_quote).split()) < 15:
+                min_quote_words = reference.minimum_quote_words or self.DEFAULT_MIN_QUOTE_WORDS
+                if len(normalize_whitespace(reference.reference_quote).split()) < min_quote_words:
                     failed_count += 1
                     continue
 

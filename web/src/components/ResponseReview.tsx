@@ -72,17 +72,21 @@ export function ResponseReview({
   const [editingSentenceIndex, setEditingSentenceIndex] = useState<number | null>(null);
   const [note, setNote] = useState("");
   const displayCitationMap = useMemo(() => buildDisplayCitationMap(session), [session]);
+  const visibleSentences = useMemo(
+    () => session.parsed_sentences.filter((sentence) => sentence.sentence_text.trim().length > 0),
+    [session.parsed_sentences],
+  );
 
   return (
     <section className="response-review">
       <div className="response-reading-flow">
-        {!session.parsed_sentences.length ? (
+        {!visibleSentences.length ? (
           <div className="response-empty-state">
             <span className="tiny-label">No verified answer to show</span>
             <p>I couldn't prepare a grounded response from the current evidence. You can try a narrower question or ask QUARRY to try again with different feedback.</p>
           </div>
         ) : null}
-        {session.parsed_sentences.map((sentence) => {
+        {visibleSentences.map((sentence) => {
           const commentable = true;
           return (
             <div className={sentenceTone(sentence)} data-testid={`sentence-${sentence.sentence_index}`} key={sentence.sentence_index}>

@@ -25,6 +25,10 @@ class ParserUnavailableError(RuntimeError):
     """Raised when a parser cannot run in the current environment."""
 
 
+def _document_title_from_path(path: Path) -> str:
+    return path.stem or path.name
+
+
 class ShellParserAdapter(ParserAdapter):
     def __init__(self, parser_name: str, command: list[str]) -> None:
         self.parser_name = parser_name
@@ -624,7 +628,7 @@ class CascadingParserAdapter(ParserAdapter):
 def parse_text_document(source_path: str, text: str, *, parser_name: str) -> ParsedDocument:
     path = Path(source_path)
     document_id = path.stem.lower().replace(" ", "-")
-    document_title = path.stem.replace("_", " ").title()
+    document_title = _document_title_from_path(path)
     sections: list[ParsedSection] = []
     current_heading = "Introduction"
     current_path = current_heading
@@ -759,7 +763,7 @@ def _build_mlx_document_from_blocks(
 ) -> ParsedDocument:
     path = Path(source_path)
     document_id = path.stem.lower().replace(" ", "-")
-    document_title = path.stem.replace("_", " ").title()
+    document_title = _document_title_from_path(path)
     sections: list[ParsedSection] = []
     current_heading = "Introduction"
     current_path = current_heading

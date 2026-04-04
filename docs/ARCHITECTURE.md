@@ -354,6 +354,13 @@ The trust model is:
 1. the quote must exist in the source text
 2. the verified citation must still semantically support the sentence
 
+Default exact-match policy requires at least 10 words for a quoted anchor. Regenerated references can opt into a shorter minimum (currently 8 words) so sentence repair has more room to produce clear prose without losing exact-text verification.
+
+NLI confidence scoring follows exact-quote verification and assigns a `confidence_label` per reference:
+
+- **`HeuristicNLIClient`** (Apple Silicon / no-model path): computes token-set overlap as `max(precision, recall)` — where precision is `|sentence ∩ chunk| / |sentence|` and recall is `|sentence ∩ chunk| / |chunk|`. Taking the maximum of both directions means a sentence that is a near-verbatim paraphrase of the source (and thus has high recall) is not unfairly penalised when it contains a few additional connective words not present in the chunk. Thresholds: ≥ 0.7 → `supported`; ≥ 0.4 → `partially_supported`; else `not_supported`.
+- **`LocalMNLIClient`** (GPU / full-transformer path): runs an MNLI classifier and maps predicted class to label. An additional soft threshold (`ENTAILMENT_SOFT_THRESHOLD = 0.35`) upgrades a result to `supported` when the argmax lands on neutral but the raw entailment probability is still ≥ 0.35. This handles near-verbatim rewrites where the model splits probability mass between entailment and neutral without a clear winner.
+
 ### 7.8 Regeneration
 
 If a sentence remains ungrounded after initial generation, the service may regenerate that sentence.
@@ -364,6 +371,8 @@ Important current optimizations:
 - unchanged sentence/reference pairs can reuse cached NLI results
 - regeneration halts early when the rewritten sentence is still ungrounded and too similar to the previous failed attempt
 - retry prompts now include the previous failed rewrite and explicitly instruct the model to find different evidence or use `[NO_REF]`
+- when regeneration cannot produce a grounded sentence, QUARRY falls back to a conservative `[NO_REF]` sentence shell instead of fabricating prose from raw chunk prefixes or bullet fragments
+- regeneration prompts explicitly prefer clear natural sentences and allow shorter verbatim quote anchors (8 to 10 words)
 
 This avoids wasting time on repeated near-identical failed rewrites.
 
@@ -371,8 +380,8 @@ This avoids wasting time on repeated near-identical failed rewrites.
 
 After regeneration and confidence scoring, QUARRY applies a stricter final response policy:
 
-- lingering ungrounded `CLAIM` sentences are removed from the visible response
-- lingering ungrounded `SYNTHESIS` sentences are also removed from the visible response
+- lingering ungrounded or `NO_REF` `CLAIM` sentences are removed from the visible response
+- lingering ungrounded or `NO_REF` `SYNTHESIS` sentences are also removed from the visible response
 - `STRUCTURE` sentences are unchanged
 
 This reflects the difference between:
@@ -482,22 +491,27 @@ The citation drawer is `web/src/components/CitationDialog.tsx`. **Match quality*
 - `retrieval_score` — final passage score after retrieval/reranking. The UI treats this as a **rough ranking signal**, not a calibrated probability (absolute scale can vary by retriever/reranker).
 - `ambiguity_gap` — difference between the top two scores in that retrieval batch (when at least two results exist).
 - `ambiguity_review_required` — set when `ambiguity_gap` is below the backend threshold (default `0.05`, `ambiguity_gap_threshold` in `src/quarry/config.py`).
+- `reference.confidence_label` / `reference.confidence_unknown` — sentence-to-passage verification output from the NLI step for the specific citation reference the user clicked.
+- `sentence.status` — sentence-level verification status (`verified`, `partially_verified`, `ungrounded`, etc.), used as a guardrail so drawer copy stays aligned with the visible answer quality.
 
 **Policy (four user-facing levels):** `strong`, `good`, `fair`, `weak` (headlines: Strong / Good / Fair / Weak match).
 
-1. Map `retrieval_score` to an internal tier: ≥ `0.9`, ≥ `0.72`, ≥ `0.5`, else lowest.
-2. Do not assign the top internal tier unless a comparable `ambiguity_gap` exists **and** the gap indicates a clear lead (≥ `0.12`); otherwise cap that step at the next tier down.
-3. **Tight race:** if `ambiguity_review_required` or `ambiguity_gap` &lt; `0.05`, drop one tier (not below weak).
-4. **Base detail text** (before optional suffix):
+1. Map `retrieval_score` to an internal retrieval tier: ≥ `0.9`, ≥ `0.72`, ≥ `0.5`, else lowest.
+2. If a comparable `ambiguity_gap` exists, only keep the top retrieval tier when the top result has a clear lead (≥ `0.05`); otherwise cap that step at the next tier down. Missing `ambiguity_gap` does not block a high-scoring citation from reaching the top retrieval tier.
+3. **Tight race:** if `ambiguity_review_required` or `ambiguity_gap` &lt; `0.05`, drop one retrieval tier (not below weak).
+4. Mix in verification signals for the clicked citation:
+   - `sentence.status in {ungrounded, no_ref}` or `reference.confidence_label == not_supported` → `weak`
+   - `sentence.status == partially_verified` or `reference.confidence_label == partially_supported` → cap at `fair`
+   - `sentence.status == unchecked` or `reference.confidence_unknown == true` → cap at `good`
+   - `verified` / `supported` leaves the retrieval-derived tier unchanged
+5. **Detail text**:
 
 | Level   | Headline       | Detail (base)                                      |
 |---------|----------------|----------------------------------------------------|
-| strong  | Strong match   | Highly relevant and well aligned.                  |
-| good    | Good match     | Relevant and reasonably aligned.                   |
-| fair    | Fair match     | Somewhat relevant, but less clear.                 |
-| weak    | Weak match     | Low relevance or uncertain support.                |
-
-5. **Optional suffix** (at most one, first applicable): after a tight-race downgrade — `Another passage was nearly as strong.`; else for good/strong when no gap — `No runner-up was available.`; else for good/strong when not a tight race and gap ≥ `0.12` — `It clearly led the next result.`
+| strong  | Strong match   | This passage clearly supports the sentence.        |
+| good    | Good match     | This passage supports the sentence.                |
+| fair    | Fair match     | This passage supports only part of the sentence.   |
+| weak    | Weak match     | This passage does not support the sentence.        |
 
 6. **Invalid score:** non-finite `retrieval_score` → weak, headline “Match quality unknown”, detail: `No retrieval score was available.`
 

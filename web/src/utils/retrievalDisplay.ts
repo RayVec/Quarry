@@ -1,3 +1,5 @@
+import type { Reference, SentenceStatus } from "../types";
+
 /**
  * Same threshold as backend `ambiguity_gap_threshold` (see quarry.config).
  * When the gap between the top two retrieval scores is below this, the run is "tight race".
@@ -5,7 +7,7 @@
 const AMBIGUITY_GAP_THRESHOLD = 0.05;
 
 /** Clear lead between #1 and #2 hit (same units as retrieval scores, typically 0–1). */
-const CLEAR_LEAD_GAP = 0.12;
+const CLEAR_LEAD_GAP = 0.05;
 
 export type UnifiedMatchLevel = "strong" | "good" | "fair" | "weak";
 
@@ -15,25 +17,34 @@ export interface UnifiedMatchQuality {
   detail: string;
 }
 
+interface MatchQualityContext {
+  sentenceStatus?: SentenceStatus | null;
+  referenceVerified?: boolean;
+  referenceConfidenceLabel?: Reference["confidence_label"];
+  referenceConfidenceUnknown?: boolean;
+}
+
 /**
  * Single user-facing match quality from technical signals:
  *
  * Strategy:
  * 1. Treat `retrieval_score` as a rough ranking signal, not calibrated confidence.
  * 2. Use broad score bands only.
- * 3. Require a non-tight race for the highest label.
- * 4. Downgrade one level when the top two passages are too close together.
+ * 3. Use a clear lead to keep the top retrieval result out of `strong` when the runner-up is very close.
+ * 4. Mix in verification: partial support caps the result at `fair`, unknown support caps it at `good`,
+ *    and unsupported sentences/references fall to `weak`.
  *
  * Labels:
- * - strong: high score and clear lead
- * - good: high/reasonable score, but not decisive enough for strong
- * - fair: somewhat relevant, needs checking
- * - weak: poor or uncertain match
+ * - strong: high retrieval score and direct verification support
+ * - good: relevant and verified enough to trust, but not at the top band
+ * - fair: relevant passage, but support for the current sentence is only partial
+ * - weak: poor, unverified, or unsupported match
  */
 export function describeUnifiedMatchQuality(
   retrievalScore: number,
   ambiguityReviewRequired: boolean,
   ambiguityGap: number | null | undefined,
+  context: MatchQualityContext = {},
 ): UnifiedMatchQuality {
   if (!Number.isFinite(retrievalScore)) {
     return {
@@ -55,12 +66,40 @@ export function describeUnifiedMatchQuality(
   else if (retrievalScore >= 0.5) scoreTier = 2;
   else scoreTier = 1;
 
-  if (scoreTier === 4 && (!hasComparableRunnerUp || !hasClearLead)) {
+  if (scoreTier === 4 && hasComparableRunnerUp && !hasClearLead) {
     scoreTier = 3;
   }
 
-  const finalTier = (tightRace ? Math.max(1, scoreTier - 1) : scoreTier) as 1 | 2 | 3 | 4;
-  const downgraded = tightRace && scoreTier > finalTier;
+  let finalTier = (tightRace ? Math.max(1, scoreTier - 1) : scoreTier) as 1 | 2 | 3 | 4;
+  let detailReason: "retrieval" | "supported" | "partial" | "unknown" | "unsupported" =
+    finalTier >= 3 ? "supported" : "retrieval";
+
+  const hasVerificationContext =
+    context.sentenceStatus != null ||
+    context.referenceVerified != null ||
+    context.referenceConfidenceLabel != null ||
+    Boolean(context.referenceConfidenceUnknown);
+  const sentenceUnsupported =
+    context.sentenceStatus === "ungrounded" || context.sentenceStatus === "no_ref";
+  const sentencePartiallyVerified = context.sentenceStatus === "partially_verified";
+  const sentenceUnchecked = context.sentenceStatus === "unchecked";
+  const referenceUnsupported =
+    context.referenceVerified === false || context.referenceConfidenceLabel === "not_supported";
+  const referencePartial = context.referenceConfidenceLabel === "partially_supported";
+  const referenceUnknown =
+    hasVerificationContext &&
+    (context.referenceConfidenceUnknown || context.referenceConfidenceLabel == null);
+
+  if (sentenceUnsupported || referenceUnsupported) {
+    finalTier = 1;
+    detailReason = "unsupported";
+  } else if (sentencePartiallyVerified || referencePartial) {
+    finalTier = Math.min(finalTier, 2) as 1 | 2;
+    detailReason = "partial";
+  } else if (sentenceUnchecked || referenceUnknown) {
+    finalTier = Math.min(finalTier, 3) as 1 | 2 | 3;
+    detailReason = "unknown";
+  }
 
   const levelByTier: Record<1 | 2 | 3 | 4, UnifiedMatchLevel> = {
     4: "strong",
@@ -78,24 +117,25 @@ export function describeUnifiedMatchQuality(
   let detail: string;
   switch (finalTier) {
     case 4:
-      detail = "Highly relevant and well aligned.";
+      detail = "This passage clearly supports the sentence.";
       break;
     case 3:
-      detail = "Relevant and reasonably aligned.";
+      detail =
+        detailReason === "unknown"
+          ? "This passage looks relevant, but support could not be confirmed."
+          : "This passage supports the sentence.";
       break;
     case 2:
-      detail = "Somewhat relevant, but less clear.";
+      detail =
+        detailReason === "partial"
+          ? "This passage supports only part of the sentence."
+          : "This passage may be relevant, but the match is not clear.";
       break;
     default:
-      detail = "Low relevance or uncertain support.";
-  }
-
-  if (downgraded) {
-    detail += " Another passage was nearly as strong.";
-  } else if (!hasComparableRunnerUp && finalTier >= 3) {
-    detail += " No runner-up was available.";
-  } else if (!tightRace && hasClearLead && finalTier >= 3) {
-    detail += " It clearly led the next result.";
+      detail =
+        detailReason === "unsupported"
+          ? "This passage does not support the sentence."
+          : "This passage is weak or uncertain.";
   }
 
   return {

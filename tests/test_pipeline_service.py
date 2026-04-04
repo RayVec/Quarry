@@ -98,6 +98,62 @@ class LingeringUngroundedGenerationClient:
         return '[NO_REF]'
 
 
+class UntaggedRegenerationClient:
+    def __init__(self) -> None:
+        self.requests = []
+
+    async def generate(self, request):
+        self.requests.append(request)
+        if request.mode == "initial":
+            return (
+                '[CLAIM] Executive leadership can better assess where and how to commit limited resources to enhance project performance. '
+                '[REF: "This quote does not exist anywhere in the source documents and should fail verification immediately"]'
+            )
+        if request.mode == "regeneration":
+            return (
+                'Using this output, executive leadership (e.g., project sponsor, executive steering committees) '
+                'can better assess where and how to commit limited resources to enhance project performance. '
+                '[REF: "Using this output, executive leadership (e.g., project sponsor, executive steering committees) '
+                'can better assess where and how to commit limited resources to enhance project performance."]'
+            )
+        return "[NO_REF]"
+
+
+class RaisingRegenerationClient:
+    def __init__(self) -> None:
+        self.requests = []
+
+    async def generate(self, request):
+        self.requests.append(request)
+        if request.mode == "initial":
+            return (
+                '[CLAIM] FEED maturity elements are a subset of the elements making up the entire PDRI. '
+                '[REF: "This exact quote does not appear anywhere in the report corpus for verification purposes"]'
+            )
+        if request.mode == "regeneration":
+            raise RuntimeError("regeneration backend unavailable")
+        return "[NO_REF]"
+
+
+class ShortQuoteRegenerationClient:
+    def __init__(self) -> None:
+        self.requests = []
+
+    async def generate(self, request):
+        self.requests.append(request)
+        if request.mode == "initial":
+            return (
+                '[CLAIM] FEED maturity elements are a subset of the elements that make up the entire PDRI. '
+                '[REF: "This exact quote does not appear anywhere in the report corpus for verification purposes"]'
+            )
+        if request.mode == "regeneration":
+            return (
+                '[CLAIM] FEED maturity elements are a subset of the entire PDRI. '
+                '[REF: "FEED maturity elements are a subset of the elements making"]'
+            )
+        return "[NO_REF]"
+
+
 class StaticHybridRetriever:
     def __init__(self, passages: list[RetrievedPassage]) -> None:
         self.passages = passages
@@ -178,6 +234,23 @@ def build_regeneration_chunk() -> ChunkObject:
         section_path="Chapter 1 > 1.2 FEED Maturity",
         page_start=5,
         page_end=5,
+    )
+
+
+def build_untagged_regeneration_chunk() -> ChunkObject:
+    return ChunkObject(
+        chunk_id="cii-regen-untagged-001",
+        document_id="cii-report-regen-untagged",
+        document_title="CII Regeneration Report Untagged",
+        text=(
+            "Using this output, executive leadership (e.g., project sponsor, executive steering committees) "
+            "can better assess where and how to commit limited resources to enhance project performance. "
+            "The discussion focuses on planning resources during front end planning."
+        ),
+        section_heading="5.1 Executive Leadership",
+        section_path="Chapter 5 > 5.1 Executive Leadership",
+        page_start=9,
+        page_end=9,
     )
 
 
@@ -447,6 +520,101 @@ def test_ungrounded_claims_and_synthesis_are_removed_from_final_response() -> No
     assert session.generated_response == ""
     assert "five-level external certification rubric" not in session.generated_response
     assert any(message.code == "removed_unverified_claims" for message in session.ui_messages)
+
+
+def test_regeneration_prefers_non_empty_sentence_from_untagged_rewrite() -> None:
+    chunk = build_untagged_regeneration_chunk()
+    chunk_store = InMemoryChunkStore([chunk])
+    retriever = StaticHybridRetriever(
+        [RetrievedPassage(chunk=chunk, score=0.92, source_facet="What helps executive leadership?", rank=1, retriever="reranked")]
+    )
+    generator = UntaggedRegenerationClient()
+    service = PipelineService(
+        chunk_store=chunk_store,
+        query_decomposer=QueryDecomposer(HeuristicDecompositionClient(), max_facets=4),
+        hybrid_retriever=retriever,
+        answer_generator=AnswerGenerator(generator),
+        sentence_regenerator=SentenceRegenerator(),
+        verifier=VerificationService(chunk_store=chunk_store, nli_client=HeuristicNLIClient()),
+        session_store=SessionStore(),
+        scoped_top_k=3,
+        refinement_token_budget=8000,
+        ambiguity_gap_threshold=0.05,
+    )
+
+    session = asyncio.run(service.run_query(QueryRequest(query="What helps executive leadership?")))
+
+    regeneration_requests = [request for request in generator.requests if request.mode == "regeneration"]
+    assert len(regeneration_requests) == 1
+    assert all(sentence.sentence_text.strip() for sentence in session.parsed_sentences)
+    assert "[CLAIM] [REF:" not in session.generated_response
+    assert any(
+        sentence.sentence_text.startswith("Using this output, executive leadership")
+        for sentence in session.parsed_sentences
+    )
+
+
+def test_regeneration_fallback_marks_sentence_no_ref_instead_of_fabricating_chunk_text() -> None:
+    chunk = build_regeneration_chunk()
+    chunk_store = InMemoryChunkStore([chunk])
+    retriever = StaticHybridRetriever(
+        [RetrievedPassage(chunk=chunk, score=0.9, source_facet="What is PDRI maturity?", rank=1, retriever="reranked")]
+    )
+    generator = RaisingRegenerationClient()
+    service = PipelineService(
+        chunk_store=chunk_store,
+        query_decomposer=QueryDecomposer(HeuristicDecompositionClient(), max_facets=4),
+        hybrid_retriever=retriever,
+        answer_generator=AnswerGenerator(generator),
+        sentence_regenerator=SentenceRegenerator(),
+        verifier=VerificationService(chunk_store=chunk_store, nli_client=HeuristicNLIClient()),
+        session_store=SessionStore(),
+        scoped_top_k=3,
+        refinement_token_budget=8000,
+        ambiguity_gap_threshold=0.05,
+    )
+
+    session = asyncio.run(service.run_query(QueryRequest(query="What is PDRI maturity?")))
+
+    regeneration_requests = [request for request in generator.requests if request.mode == "regeneration"]
+    assert len(regeneration_requests) == 2
+    assert session.removed_ungrounded_claim_count == 1
+    assert session.response_mode.value == "generation_failed"
+    assert session.generated_response == ""
+    assert session.parsed_sentences == []
+
+
+def test_regeneration_accepts_shorter_exact_quote_for_clean_sentence_repair() -> None:
+    chunk = build_regeneration_chunk()
+    chunk_store = InMemoryChunkStore([chunk])
+    retriever = StaticHybridRetriever(
+        [RetrievedPassage(chunk=chunk, score=0.9, source_facet="What is PDRI maturity?", rank=1, retriever="reranked")]
+    )
+    generator = ShortQuoteRegenerationClient()
+    service = PipelineService(
+        chunk_store=chunk_store,
+        query_decomposer=QueryDecomposer(HeuristicDecompositionClient(), max_facets=4),
+        hybrid_retriever=retriever,
+        answer_generator=AnswerGenerator(generator),
+        sentence_regenerator=SentenceRegenerator(),
+        verifier=VerificationService(chunk_store=chunk_store, nli_client=HeuristicNLIClient()),
+        session_store=SessionStore(),
+        scoped_top_k=3,
+        refinement_token_budget=8000,
+        ambiguity_gap_threshold=0.05,
+    )
+
+    session = asyncio.run(service.run_query(QueryRequest(query="What is PDRI maturity?")))
+
+    regenerated_sentence = session.parsed_sentences[0]
+
+    assert any(request.mode == "regeneration" for request in generator.requests)
+    assert session.response_mode.value == "response_review"
+    assert session.removed_ungrounded_claim_count == 0
+    assert regenerated_sentence.sentence_text == "FEED maturity elements are a subset of the entire PDRI."
+    assert regenerated_sentence.references[0].reference_quote == "FEED maturity elements are a subset of the elements making"
+    assert regenerated_sentence.references[0].minimum_quote_words == 8
+    assert regenerated_sentence.references[0].verified is True
 
 
 def test_clarification_required_query_includes_rewrite_suggestions() -> None:
