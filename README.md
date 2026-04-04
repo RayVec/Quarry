@@ -71,7 +71,7 @@ Then open `quarry.local.toml` and fill in the values for your setup. The example
 | Profile | Hardware | Local model stack |
 |---|---|---|
 | `apple_lite_mlx` | Apple Silicon (M1/M2/M3/M4) | MLX Qwen 4B text + MLX Qwen-VL 4B vision parser |
-| `full_local_transformers` | CUDA GPU or CPU | HuggingFace Qwen 7B + olmOCR 7B parser |
+| `full_local_transformers` | Linux / Windows with a GPU | HuggingFace Qwen 7B text + olmOCR 7B vision parser |
 
 > **Auto-detection:** QUARRY defaults to `apple_lite_mlx` on Apple Silicon and `full_local_transformers` on everything else. You can override with `runtime.profile` in your TOML.
 

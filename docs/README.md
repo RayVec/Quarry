@@ -134,8 +134,9 @@ That gives you:
   - MLX Qwen text + MLX Qwen vision parser
   - parser is model-first for PDFs
 - `full_local_transformers`
-  - heavier transformers path
-  - local Qwen text + olmOCR parser stack with lightweight PDF text fallbacks
+  - for Linux / Windows machines with a GPU
+  - standard HuggingFace Qwen 7B text model + olmOCR 7B vision parser
+  - models are larger and slower than the MLX equivalents
 
 ## Corpus and Artifacts
 

@@ -19,7 +19,7 @@ mode = "hybrid"
 
 # profile: selects the local model stack
 #   apple_lite_mlx          — MLX-based Qwen models; best for Apple Silicon
-#   full_local_transformers — HuggingFace transformers path; heavier, GPU recommended
+#   full_local_transformers — standard HuggingFace models; for Linux/Windows with a GPU
 profile = "apple_lite_mlx"
 
 # Set to false to disable ALL local model loading (useful in hosted-only setups)

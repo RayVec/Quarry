@@ -39,6 +39,8 @@ Intended use:
 
 ### 2.2 `full_local_transformers`
 
+Use this profile on Linux or Windows machines with a GPU. It loads standard HuggingFace models — larger than the MLX equivalents but compatible with any CUDA-capable hardware.
+
 Primary local text model:
 
 - `Qwen/Qwen2.5-7B-Instruct`
