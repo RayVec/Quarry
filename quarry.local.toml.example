@@ -22,12 +22,6 @@ mode = "hybrid"
 #   gpu — standard HuggingFace models; for Linux/Windows with a GPU
 profile = "apple_silicon"
 
-# Set to false to disable ALL local model loading (useful in hosted-only setups)
-use_local_models = true
-
-# Device for local models: "auto", "mps", "cuda", "cpu"
-local_model_device = "auto"
-
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
