@@ -53,7 +53,7 @@ npm install
 QUARRY reads its runtime config from `quarry.local.toml`. This file is **gitignored** and must be created locally by each user.
 
 ```bash
-cp quarry.local.toml.example quarry.local.toml
+cp config.example.toml quarry.local.toml
 ```
 
 Then open `quarry.local.toml` and fill in the values for your setup. The example file is fully annotated.
