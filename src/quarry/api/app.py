@@ -24,6 +24,12 @@ from .routes import router
 logger = logger_with_trace(__name__)
 
 
+def _is_console_noisy_request(method: str, path: str) -> bool:
+    if method != "GET":
+        return False
+    return path.startswith("/api/v1/sessions/")
+
+
 def _ensure_runtime_ready(settings: Settings, local_model_status: dict[str, str]) -> None:
     if settings.runtime_mode != "local":
         return
@@ -98,6 +104,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def trace_requests(request: Request, call_next):
         request_start = timed()
         trace_id = start_trace()
+        console_visible = not _is_console_noisy_request(request.method, request.url.path)
         logger.info(
             "http request started",
             extra={
@@ -105,6 +112,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "method": request.method,
                 "path": request.url.path,
                 "query_string": request.url.query,
+                "console_visible": console_visible,
             },
         )
         try:
@@ -118,6 +126,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     "path": request.url.path,
                     "error": str(exc),
                     "latency_ms": elapsed_ms(request_start),
+                    "console_visible": True,
                 },
             )
             raise
@@ -129,6 +138,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "path": request.url.path,
                 "status_code": response.status_code,
                 "latency_ms": elapsed_ms(request_start),
+                "console_visible": console_visible,
             },
         )
         response.headers["X-Trace-Id"] = trace_id
@@ -153,4 +163,4 @@ app = create_app()
 def main() -> None:
     import uvicorn
 
-    uvicorn.run("quarry.api.app:app", host="127.0.0.1", port=8000, reload=False)
+    uvicorn.run("quarry.api.app:app", host="127.0.0.1", port=8000, reload=False, access_log=False)

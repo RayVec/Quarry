@@ -82,7 +82,7 @@ def main() -> None:
         )
         return
     elif args.command == "serve":
-        uvicorn.run(create_app(settings), host=args.host, port=args.port, reload=False)
+        uvicorn.run(create_app(settings), host=args.host, port=args.port, reload=False, access_log=False)
         return
     else:
         raise RuntimeError(f"Unsupported command: {args.command}")

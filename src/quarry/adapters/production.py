@@ -80,7 +80,7 @@ class OpenAICompatibleLLM:
                 "model": self.model,
                 "temperature": temperature,
                 "prompt": prompt,
-                "console_visible": False,
+                "console_visible": True,
             },
         )
         start = timed()
@@ -112,7 +112,7 @@ class OpenAICompatibleLLM:
                 "model": self.model,
                 "response": raw,
                 "latency_ms": elapsed_ms(start),
-                "console_visible": False,
+                "console_visible": True,
             },
         )
         return raw

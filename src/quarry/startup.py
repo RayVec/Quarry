@@ -196,7 +196,7 @@ def serve_backend(
         "startup launching api server",
         extra={"host": host, "port": port, "latency_ms": elapsed_ms(server_start)},
     )
-    uvicorn.run(create_app(settings), host=host, port=port, reload=False)
+    uvicorn.run(create_app(settings), host=host, port=port, reload=False, access_log=False)
 
 
 def build_start_parser() -> argparse.ArgumentParser:

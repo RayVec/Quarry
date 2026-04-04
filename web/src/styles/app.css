@@ -545,10 +545,11 @@ h3 {
   height: auto;
   background: transparent;
   box-shadow: none;
-  padding: 0;
+  padding: 0 0.12rem;
   font-size: 1.06rem;
   line-height: 1.7;
   color: var(--on-surface);
+  caret-color: var(--on-surface);
 }
 
 .composer-textarea::placeholder {
@@ -1053,8 +1054,16 @@ h3 {
 .retrieval-strength {
   --retrieval-accent: var(--secondary);
   --retrieval-ink: var(--secondary);
-  --retrieval-icon-surface: color-mix(in srgb, var(--retrieval-accent) 10%, white);
-  --retrieval-icon-stroke: color-mix(in srgb, var(--retrieval-accent) 18%, white);
+  --retrieval-icon-surface: color-mix(
+    in srgb,
+    var(--retrieval-accent) 10%,
+    white
+  );
+  --retrieval-icon-stroke: color-mix(
+    in srgb,
+    var(--retrieval-accent) 18%,
+    white
+  );
   --retrieval-icon-color: var(--retrieval-accent);
   padding: 0;
   border: none;
@@ -1073,14 +1082,22 @@ h3 {
 .retrieval-strength--good {
   --retrieval-accent: #0f8a68;
   --retrieval-ink: #0b5d48;
-  --retrieval-icon-surface: color-mix(in srgb, var(--tertiary-fixed) 56%, white);
+  --retrieval-icon-surface: color-mix(
+    in srgb,
+    var(--tertiary-fixed) 56%,
+    white
+  );
   --retrieval-icon-stroke: color-mix(in srgb, #0f8a68 24%, white);
 }
 
 .retrieval-strength--fair {
   --retrieval-accent: var(--warning-accent);
   --retrieval-ink: var(--warning-ink);
-  --retrieval-icon-surface: color-mix(in srgb, var(--warning-accent) 16%, white);
+  --retrieval-icon-surface: color-mix(
+    in srgb,
+    var(--warning-accent) 16%,
+    white
+  );
   --retrieval-icon-stroke: color-mix(in srgb, var(--warning-accent) 28%, white);
 }
 
