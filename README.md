@@ -39,9 +39,19 @@ cd web && npm install && cd ..
 cp config.example.toml config.toml
 ```
 
-Open `config.toml`. There are only two things most users need to set:
+Open `config.toml`. Most users only need to think about these two things:
 
-**Your API key** — needed for answer generation:
+**1. Choose a mode** — if you're not sure, keep the default:
+```toml
+[runtime]
+mode = "hybrid"
+```
+
+- `hybrid`: recommended; local retrieval/parsing/verification plus hosted answer generation
+- `local`: no API key; everything runs locally
+- `hosted`: use a hosted LLM for generation while keeping the rest of the stack configured through the same app
+
+**2. If you use `hybrid` or `hosted`, add your API key:**
 ```toml
 [hosted]
 llm_api_key = "YOUR_API_KEY_HERE"
@@ -50,7 +60,7 @@ llm_model   = "openai/gpt-4o-mini"
 
 Get a free key at [openrouter.ai](https://openrouter.ai) — it gives access to many models including free-tier ones.
 
-> Want to run fully local with no API key? Set `mode = "local"` in `[runtime]` and run `quarry warm-local-models` first. Models total ~8 GB for Apple Silicon.
+`profile` is auto-detected from your hardware, so most users do not need to set it.
 
 ---
 

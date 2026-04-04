@@ -4,31 +4,31 @@
 # config.toml is gitignored — it will never be committed.
 
 # ============================================================
-# STEP 1 — Choose your runtime mode and hardware profile
-# These two settings control everything about how QUARRY runs.
+# STEP 1 — Choose your mode
+# Most users should leave this at "hybrid".
 # ============================================================
 [runtime]
 
 # mode: overall behaviour
-#   hybrid  — local models handle retrieval; hosted model handles generation (recommended)
-#   local   — everything runs locally; startup fails if models are not warmed first
-#   hosted  — all generation delegated to the hosted LLM; local models still handle retrieval
+#   hybrid  — recommended; local retrieval/parsing/verification plus hosted answer generation
+#   local   — no API key; everything runs locally
+#   hosted  — use a hosted LLM for generation while keeping the rest of the app flow the same
 mode = "hybrid"
 
 # profile: auto-detected from your hardware (apple_silicon on Mac M-series, gpu elsewhere)
-# Only set this if you want to override the auto-detected value.
+# Most users should leave this unset. Only uncomment if auto-detection is wrong.
 # profile = "apple_silicon"
 # profile = "gpu"
 
 
 # ============================================================
-# STEP 2 — Add your API key for hosted generation
+# STEP 2 — Add your API key
 # Only required when mode = "hybrid" or mode = "hosted".
-# Skip this section entirely if you want to run fully local.
+# If mode = "local", you can leave this section alone.
 # ============================================================
 [hosted]
 
-# Your API key — this is the only secret you need to provide.
+# Your API key — this is the main value most users need to fill in.
 # Supports any OpenAI-compatible endpoint (OpenRouter, OpenAI, Azure, etc.)
 llm_api_key = "YOUR_API_KEY_HERE"
 
