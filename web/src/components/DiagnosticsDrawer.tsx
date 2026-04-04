@@ -1,3 +1,4 @@
+import { X } from "lucide-react";
 import type { SessionState } from "../types";
 
 interface DiagnosticsDrawerProps {
@@ -19,8 +20,14 @@ export function DiagnosticsDrawer({ session, open, onClose }: DiagnosticsDrawerP
             <span className="eyebrow">Developer diagnostics</span>
             <h2>Runtime details</h2>
           </div>
-          <button className="icon-button" data-testid="close-diagnostics" onClick={onClose}>
-            Close
+          <button
+            type="button"
+            className="icon-button drawer-close-trigger"
+            data-testid="close-diagnostics"
+            aria-label="Close diagnostics"
+            onClick={onClose}
+          >
+            <X aria-hidden size={20} strokeWidth={2} />
           </button>
         </div>
 

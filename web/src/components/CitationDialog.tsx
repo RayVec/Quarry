@@ -1,7 +1,9 @@
 import { startTransition, useMemo, useState } from "react";
+import { X } from "lucide-react";
 import { api } from "../api";
 import type { CitationIndexEntry, SessionState } from "../types";
 import { buildDisplayCitationMap } from "../utils/citationDisplay";
+import { describeUnifiedMatchQuality } from "../utils/retrievalDisplay";
 
 interface CitationDialogProps {
   citation: CitationIndexEntry;
@@ -41,12 +43,14 @@ export function CitationDialog({
   const [mismatchNote, setMismatchNote] = useState("");
   const displayCitationMap = useMemo(() => buildDisplayCitationMap(session), [session]);
   const displayCitationId = displayCitationMap.get(citation.citation_id) ?? citation.citation_id;
-  const retrievalModes = useMemo(
+  const matchQuality = useMemo(
     () =>
-      Object.entries(citation.retrieval_scores)
-        .map(([name, score]) => `${name}:${score.toFixed(3)}`)
-        .join(" · "),
-    [citation.retrieval_scores],
+      describeUnifiedMatchQuality(
+        citation.retrieval_score,
+        citation.ambiguity_review_required,
+        citation.ambiguity_gap,
+      ),
+    [citation.retrieval_score, citation.ambiguity_review_required, citation.ambiguity_gap],
   );
 
   async function handleLoadMore() {
@@ -91,13 +95,15 @@ export function CitationDialog({
         <div className="drawer-header">
           <div>
             <span className="eyebrow">Citation [{displayCitationId}]</span>
-            <h2>{citation.section_heading}</h2>
-            <p>
-              {citation.document_title} · p. {citation.page_number}
-            </p>
           </div>
-          <button className="icon-button" data-testid="close-citation-dialog" onClick={onClose}>
-            Close
+          <button
+            type="button"
+            className="icon-button drawer-close-trigger"
+            data-testid="close-citation-dialog"
+            aria-label="Close citation"
+            onClick={onClose}
+          >
+            <X aria-hidden size={20} strokeWidth={2} />
           </button>
         </div>
 
@@ -118,12 +124,13 @@ export function CitationDialog({
           </section>
 
           <section className="drawer-section">
-            <span className="tiny-label">Retrieval info</span>
-            <p>
-              score {citation.retrieval_score.toFixed(3)} · facet {citation.source_facet}
-            </p>
-            {retrievalModes ? <p>{retrievalModes}</p> : null}
-            {citation.ambiguity_gap != null ? <p>ambiguity gap {citation.ambiguity_gap.toFixed(3)}</p> : null}
+            <span className="tiny-label">Match quality</span>
+            <div className="retrieval-human">
+              <div className={`retrieval-strength retrieval-strength--${matchQuality.level}`}>
+                <p className="retrieval-strength-headline">{matchQuality.headline}</p>
+                <p className="retrieval-strength-detail">{matchQuality.detail}</p>
+              </div>
+            </div>
           </section>
 
           <section className="drawer-section">

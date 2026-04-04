@@ -162,6 +162,13 @@ Once a query exists, the layout transitions into a working research surface:
 - use glassmorphism with blurred `surface-variant`
 - should slide over the workspace rather than reflow content
 
+### Citation drawer (review)
+
+- **Header:** eyebrow only (`Citation [n]`) plus a close control. No large title block in the header (document and section context stay in **Source metadata** below).
+- **Close control:** `lucide-react` icon (`X`) with an accessible name (for example `aria-label="Close citation"`). Use the `drawer-close-trigger` class for the compact square hit target. Keep this separate from `diagnostics-trigger`, which is reserved for the thread-header gear so the two controls can be sized independently (`web/src/styles/app.css`).
+- **Match quality:** one short, readable summary (Strong / Good / Fair / Weak) plus a brief description. Prefer plain language; avoid implying calibrated “confidence” or showing raw retrieval numbers in the primary view.
+- **Retrieval facet:** the facet string is not duplicated in the drawer UI; it remains in session/API data and related metadata sections as needed.
+
 ### Icons
 
 - use `lucide-react` as the default icon library for interface controls
@@ -225,6 +232,7 @@ The current frontend implementation applies this system in:
 - `web/src/components/ReviewPanel.tsx`
 - `web/src/components/CitationDialog.tsx`
 - `web/src/components/DiagnosticsDrawer.tsx`
+- `web/src/utils/retrievalDisplay.ts`
 - `web/src/styles/app.css`
 
 The design system is intended to be the source of truth for future UI revisions. New surfaces should conform to this tonal, editorial, and no-line approach unless there is a strong product reason to deviate.

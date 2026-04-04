@@ -473,6 +473,36 @@ Current behavior:
 - removed-sentence warnings are surfaced to the reviewer in the message and review panel
 - older assistant messages remain visible but read-only
 
+### 10.2.1 Citation drawer and match quality
+
+The citation drawer is `web/src/components/CitationDialog.tsx`. **Match quality** copy is produced by `describeUnifiedMatchQuality()` in `web/src/utils/retrievalDisplay.ts`.
+
+**Inputs from the session citation** (see `CitationIndexEntry` and `build_citation_index` in `src/quarry/pipeline/retrieval.py`):
+
+- `retrieval_score` — final passage score after retrieval/reranking. The UI treats this as a **rough ranking signal**, not a calibrated probability (absolute scale can vary by retriever/reranker).
+- `ambiguity_gap` — difference between the top two scores in that retrieval batch (when at least two results exist).
+- `ambiguity_review_required` — set when `ambiguity_gap` is below the backend threshold (default `0.05`, `ambiguity_gap_threshold` in `src/quarry/config.py`).
+
+**Policy (four user-facing levels):** `strong`, `good`, `fair`, `weak` (headlines: Strong / Good / Fair / Weak match).
+
+1. Map `retrieval_score` to an internal tier: ≥ `0.9`, ≥ `0.72`, ≥ `0.5`, else lowest.
+2. Do not assign the top internal tier unless a comparable `ambiguity_gap` exists **and** the gap indicates a clear lead (≥ `0.12`); otherwise cap that step at the next tier down.
+3. **Tight race:** if `ambiguity_review_required` or `ambiguity_gap` &lt; `0.05`, drop one tier (not below weak).
+4. **Base detail text** (before optional suffix):
+
+| Level   | Headline       | Detail (base)                                      |
+|---------|----------------|----------------------------------------------------|
+| strong  | Strong match   | Highly relevant and well aligned.                  |
+| good    | Good match     | Relevant and reasonably aligned.                   |
+| fair    | Fair match     | Somewhat relevant, but less clear.                 |
+| weak    | Weak match     | Low relevance or uncertain support.                |
+
+5. **Optional suffix** (at most one, first applicable): after a tight-race downgrade — `Another passage was nearly as strong.`; else for good/strong when no gap — `No runner-up was available.`; else for good/strong when not a tight race and gap ≥ `0.12` — `It clearly led the next result.`
+
+6. **Invalid score:** non-finite `retrieval_score` → weak, headline “Match quality unknown”, detail: `No retrieval score was available.`
+
+The diagnostics drawer close button uses the same icon-only pattern and `drawer-close-trigger` styling as the citation drawer.
+
 ### 10.3 UI modes
 
 The UI handles multiple response modes:
