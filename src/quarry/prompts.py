@@ -148,6 +148,9 @@ def generation_prompt(request: GenerationRequest) -> str:
 
     sections.append(
         "## Citation Format\n\n"
+        "Group related sentences into paragraphs. Insert a [PARA] marker when the topic shifts\n"
+        "or when transitioning between distinct aspects of the answer.\n"
+        "[PARA] is formatting only: it is not a sentence tag and must not include references.\n\n"
         "After writing each sentence, tag it and cite your evidence using\n"
         "exactly this format:\n\n"
         "CLAIM sentences state a single fact drawn from one passage.\n"
@@ -250,6 +253,17 @@ def _format_reviewer_feedback(request: GenerationRequest) -> str:
         if context.strip():
             feedback_lines.append(f"- Contradicting evidence: {context.strip()}")
 
+    for comment in request.sentence_comments:
+        label = f"Sentence {comment.sentence_index}" if comment.sentence_index is not None else "Sentence (unknown)"
+        if comment.sentence_type is not None:
+            label = f"{label} [{comment.sentence_type.value.upper()}]"
+        if comment.comment.strip():
+            feedback_lines.append(f"- {label}: {comment.comment.strip()}")
+
+    for comment in request.response_comments:
+        if comment.strip():
+            feedback_lines.append(f"- Response-level comment: {comment.strip()}")
+
     return "\n".join(feedback_lines)
 
 
@@ -267,16 +281,38 @@ def _format_mode_instruction(request: GenerationRequest) -> str:
         )
 
     if request.mode == "refinement":
+        sentence_comment_instruction = ""
+        if request.sentence_comments:
+            sentence_comment_instruction = (
+                "\nTreat sentence-level reviewer comments as required edits.\n"
+                "You may adjust surrounding sentences only when needed to keep the answer consistent.\n"
+                "Preserve unaffected sentences and avoid unnecessary rewrites."
+            )
+        response_comment_instruction = ""
+        if request.response_comments:
+            response_comment_instruction = (
+                "\nResponse-level comments indicate missing topics. Add grounded coverage for those topics."
+            )
         return (
             "## Additional Instruction\n"
-            "Regenerate the full response. Avoid reliance on flagged passages.\n"
+            "Regenerate the full response from the current answer context and passages.\n"
+            "Avoid reliance on flagged passages.\n"
             "Where the reviewer disagreed with a claim, present both the original\n"
             "evidence and any contradicting evidence. If evidence is insufficient\n"
             "after removing flagged passages, say so rather than citing unsupported\n"
             "sources."
+            f"{sentence_comment_instruction}"
+            f"{response_comment_instruction}"
         )
 
     if request.mode == "regeneration" and request.failed_sentence_text:
+        comment_instruction = ""
+        if request.failed_sentence_comment:
+            comment_instruction = (
+                "\n\n## Reviewer Comment\n"
+                f"{request.failed_sentence_comment.strip()}\n"
+                "Address this comment while rewriting the sentence."
+            )
         retry_guidance = ""
         if request.failed_regeneration_response:
             retry_guidance = (
@@ -296,6 +332,7 @@ def _format_mode_instruction(request: GenerationRequest) -> str:
             "when they provide a clean anchor for the sentence.\n"
             "Include a valid [REF: \"exact quote\"] or mark it [NO_REF] if no\n"
             "passage supports the claim."
+            f"{comment_instruction}"
             f"{retry_guidance}"
         )
 

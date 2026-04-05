@@ -21,6 +21,7 @@ from quarry.config import Settings, is_local_component_ready
 from quarry.domain.models import ParsedDocument, RetrievedPassage
 from quarry.ingest.chunking import chunk_document
 from quarry.ingest.indexing import build_vector_index, enrich_chunks, write_artifacts
+from quarry.ingest.normalize import detect_quality_issues
 from quarry.ingest.parsers import (
     BasicTextParser,
     CascadingParserAdapter,
@@ -258,6 +259,69 @@ def rebuild_indexes(settings: Settings) -> dict[str, object]:
     manifest["active_model_ids"] = settings.active_model_ids
     manifest_path.write_text(json.dumps(manifest, indent=2))
     return {"rebuilt": True, "chunk_count": len(all_chunks)}
+
+
+def validate(settings: Settings) -> dict[str, object]:
+    errors: list[str] = []
+    warnings: list[str] = []
+    manifest_path = settings.artifacts_dir / "manifest.json"
+    if not manifest_path.exists():
+        errors.append(f"Missing manifest: {manifest_path}")
+        return {"valid": False, "errors": errors, "warnings": warnings}
+
+    try:
+        manifest_payload = json.loads(manifest_path.read_text())
+    except Exception as exc:
+        errors.append(f"Invalid manifest JSON: {exc}")
+        return {"valid": False, "errors": errors, "warnings": warnings}
+
+    required_paths = (
+        "vector_index_path",
+        "vector_metadata_path",
+        "structural_index_path",
+    )
+    for key in required_paths:
+        raw_path = manifest_payload.get(key)
+        if not raw_path:
+            errors.append(f"Manifest missing required field: {key}")
+            continue
+        if not Path(str(raw_path)).exists():
+            errors.append(f"Missing artifact file for {key}: {raw_path}")
+
+    for document in manifest_payload.get("documents", []):
+        parsed_path = Path(str(document.get("parsed_document_path", "")))
+        chunks_path = Path(str(document.get("chunks_path", "")))
+        if not parsed_path.exists():
+            errors.append(f"Missing parsed document artifact: {parsed_path}")
+            continue
+        if not chunks_path.exists():
+            errors.append(f"Missing chunks artifact: {chunks_path}")
+            continue
+        try:
+            parsed_document = ParsedDocument.model_validate(json.loads(parsed_path.read_text()))
+        except Exception as exc:
+            errors.append(f"Invalid parsed document artifact {parsed_path}: {exc}")
+            continue
+        errors.extend(detect_quality_issues(parsed_document))
+
+    if settings.runtime_mode == "local" and settings.use_local_models:
+        status_path = settings.artifacts_dir / "local_model_status.json"
+        if not status_path.exists():
+            errors.append("Run `quarry warm-local-models` before using local runtime mode.")
+        else:
+            try:
+                status_payload = json.loads(status_path.read_text())
+            except Exception as exc:
+                errors.append(f"Invalid local model status file: {exc}")
+            else:
+                required_components = ("embedding", "reranker", "nli", "text", "decomposition", "generation", "parser")
+                for component in required_components:
+                    if not str(status_payload.get(component, "")).startswith("ready:"):
+                        errors.append(f"Local component not ready ({component}). Run `quarry warm-local-models`.")
+                if status_payload.get("runtime_profile") not in (None, settings.runtime_profile):
+                    errors.append("Local model warmup runtime profile mismatch; rerun `quarry warm-local-models`.")
+
+    return {"valid": not errors, "errors": errors, "warnings": warnings}
 
 
 def warm_local_models(settings: Settings) -> dict[str, object]:

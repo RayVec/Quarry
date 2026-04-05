@@ -3,23 +3,20 @@ import { ResponseReview } from "./ResponseReview";
 import { ReviewPanel } from "./ReviewPanel";
 import type { ParsedSentence, SessionState } from "../types";
 
-export type AssistantMessageSource = "query" | "supplement" | "refinement";
+export type AssistantMessageSource = "query" | "refinement";
 
 interface ConversationMessageProps {
   source: AssistantMessageSource;
   session: SessionState;
   interactive: boolean;
   onOpenCitation: (session: SessionState, sentence: ParsedSentence, citationId: number, referenceQuote: string, readOnly: boolean) => void;
-  onSaveDisagreement: (session: SessionState, sentenceIndex: number, note: string) => Promise<void>;
-  onSupplement: (selectedFacets: string[]) => Promise<void>;
-  onRefine: (selectedFacets: string[]) => Promise<void>;
+  onSaveComment: (session: SessionState, sentenceIndex: number, note: string) => Promise<void>;
+  onSaveResponseComment: (session: SessionState, note: string) => Promise<void>;
+  onRefine: () => Promise<void>;
   onRunClarificationSuggestion: (query: string) => void;
 }
 
 function messageTitle(source: AssistantMessageSource, session: SessionState) {
-  if (source === "supplement") {
-    return "Supplement";
-  }
   if (source === "refinement") {
     return "Refined response";
   }
@@ -57,19 +54,12 @@ export function ConversationMessage({
   session,
   interactive,
   onOpenCitation,
-  onSaveDisagreement,
-  onSupplement,
+  onSaveComment,
+  onSaveResponseComment,
   onRefine,
   onRunClarificationSuggestion,
 }: ConversationMessageProps) {
-  const [reviewOpen, setReviewOpen] = useState(false);
-  const [selectedFacetGaps, setSelectedFacetGaps] = useState<string[]>([]);
   const readOnly = !interactive;
-
-  useEffect(() => {
-    setReviewOpen(false);
-    setSelectedFacetGaps([]);
-  }, [session.session_id, session.response_mode, source]);
 
   return (
     <article className={`thread-message assistant-message ${readOnly ? "archived" : "interactive"}`}>
@@ -106,7 +96,7 @@ export function ConversationMessage({
           onOpenCitation={(sentence, citationId, referenceQuote) =>
             onOpenCitation(session, sentence, citationId, referenceQuote, readOnly)
           }
-          onSaveDisagreement={(sentenceIndex, note) => onSaveDisagreement(session, sentenceIndex, note)}
+          onSaveComment={(sentenceIndex, note) => onSaveComment(session, sentenceIndex, note)}
         />
       )}
 
@@ -114,15 +104,7 @@ export function ConversationMessage({
         <ReviewPanel
           session={session}
           interactive={interactive}
-          open={reviewOpen}
-          selectedFacetGaps={selectedFacetGaps}
-          onToggle={() => setReviewOpen((current) => !current)}
-          onFacetToggle={(facet) =>
-            setSelectedFacetGaps((current) =>
-              current.includes(facet) ? current.filter((item) => item !== facet) : [...current, facet],
-            )
-          }
-          onSupplement={onSupplement}
+          onSaveResponseComment={(note) => onSaveResponseComment(session, note)}
           onRefine={onRefine}
         />
       ) : null}

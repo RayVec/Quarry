@@ -30,6 +30,12 @@ class SentenceStatus(str, Enum):
     UNCHECKED = "unchecked"
 
 
+class MatchQuality(str, Enum):
+    STRONG = "strong"
+    PARTIAL = "partial"
+    NONE = "none"
+
+
 class ConfidenceLabel(str, Enum):
     SUPPORTED = "supported"
     PARTIALLY_SUPPORTED = "partially_supported"
@@ -157,6 +163,8 @@ class ParsedSentence(BaseModel):
     sentence_type: SentenceType
     references: list[Reference] = Field(default_factory=list)
     status: SentenceStatus = SentenceStatus.UNCHECKED
+    match_quality: MatchQuality = MatchQuality.NONE
+    paragraph_index: int = 0
     warnings: list[ReviewWarning] = Field(default_factory=list)
     raw_text: str = ""
     disagreement_flagged: bool = False
@@ -180,18 +188,19 @@ class StructuralIndexEntry(BaseModel):
     covered: bool = False
 
 
-class CitationMismatch(BaseModel):
-    citation_id: int
-    reviewer_note: str | None = None
+
+
+class ReviewComment(BaseModel):
+    sentence_index: int | None = None
+    sentence_type: SentenceType | None = None
+    sentence_text: str | None = None
+    comment: str
+    created_at: datetime = Field(default_factory=utc_now)
 
 
 class CitationReplacement(BaseModel):
-    sentence_index: int
     citation_id: int
-    original_chunk_id: str
     replacement_chunk_id: str
-    reviewer_note: str | None = None
-    created_at: datetime = Field(default_factory=utc_now)
 
 
 class ClaimDisagreement(BaseModel):
@@ -201,9 +210,7 @@ class ClaimDisagreement(BaseModel):
     contradicting_passages: list[str] | None = None
 
 class FeedbackState(BaseModel):
-    citation_mismatches: list[CitationMismatch] = Field(default_factory=list)
-    claim_disagreements: list[ClaimDisagreement] = Field(default_factory=list)
-    facet_gaps: list[str] = Field(default_factory=list)
+    comments: list[ReviewComment] = Field(default_factory=list)
     citation_replacements: list[CitationReplacement] = Field(default_factory=list)
 
 
@@ -294,7 +301,10 @@ class GenerationRequest(BaseModel):
     mismatch_citation_ids: list[int] = Field(default_factory=list)
     disagreement_notes: list[str] = Field(default_factory=list)
     disagreement_contexts: list[str] = Field(default_factory=list)
+    sentence_comments: list[ReviewComment] = Field(default_factory=list)
+    response_comments: list[str] = Field(default_factory=list)
     failed_sentence_text: str | None = None
+    failed_sentence_comment: str | None = None
     failed_regeneration_response: str | None = None
     max_regeneration_quotes: int = 2
     repair_prior_response: str | None = None
@@ -309,31 +319,20 @@ class QueryRequest(BaseModel):
     query: str = Field(min_length=1)
 
 
-class CitationMismatchRequest(BaseModel):
-    citation_id: int
-    reviewer_note: str | None = None
-
-
-class ClaimDisagreementRequest(BaseModel):
-    sentence_index: int
-    reviewer_note: str | None = None
-
-
-class FacetGapRequest(BaseModel):
-    facets: list[str] = Field(default_factory=list)
-
-
-class ScopedRetrievalRequest(BaseModel):
-    sentence_index: int
-    citation_id: int
-    top_k: int = Field(default=3, ge=1, le=10)
+class ReviewCommentRequest(BaseModel):
+    sentence_index: int | None = None
+    comment: str = Field(min_length=1)
 
 
 class CitationReplacementRequest(BaseModel):
     sentence_index: int
-    citation_id: int
-    replacement_chunk_id: str
-    reviewer_note: str | None = None
+    replacement_chunk_id: str = Field(min_length=1)
+
+
+class ScopedRetrievalEnvelope(BaseModel):
+    citations: list[CitationIndexEntry]
+
+
 
 
 class SessionEnvelope(BaseModel):

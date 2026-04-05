@@ -1,7 +1,7 @@
 import asyncio
 
 from quarry.adapters.interfaces import DecompositionClient
-from quarry.domain.models import CitationIndexEntry, GenerationRequest
+from quarry.domain.models import CitationIndexEntry, GenerationRequest, ReviewComment
 from quarry.pipeline.decomposition import QueryDecomposer
 from quarry.prompts import SHARED_SYSTEM_PROMPT, decomposition_classification_prompt, decomposition_prompt, generation_prompt, repair_generation_prompt, with_shared_system_prompt
 
@@ -40,7 +40,9 @@ def test_generation_prompt_places_context_and_task_before_citation_rules() -> No
     assert "## Citation Format" in prompt
     assert prompt.index("## Source Passages") < prompt.index("## Your Task") < prompt.index("## Citation Format")
     assert "The most important finding or answer comes first" in prompt
-    assert "For standard response generation, use 15 to 40 words" in prompt
+    assert "For standard response generation, use 10 to 40 words" in prompt
+    assert "Insert a [PARA] marker when the topic shifts" in prompt
+    assert "[PARA] is formatting only" in prompt
 
 
 def test_decomposition_classification_prompt_uses_three_way_schema() -> None:
@@ -117,6 +119,32 @@ def test_generation_prompt_includes_refinement_feedback_sections() -> None:
     assert "Disagreement note: This claim may not apply to retrofit projects." in prompt
     assert "Contradicting evidence: Sentence 2: A later section says retrofit schedules were more variable than new-build schedules." in prompt
     assert "Avoid reliance on flagged passages." in prompt
+
+
+def test_generation_prompt_includes_sentence_and_response_comments() -> None:
+    request = GenerationRequest(
+        original_query="What are the main schedule risks?",
+        facets=["schedule drivers"],
+        citation_index=[_citation(1, "Procurement packages that were locked late repeatedly disrupted installation windows.")],
+        mode="refinement",
+        sentence_comments=[
+            ReviewComment(
+                sentence_index=3,
+                sentence_type="claim",
+                sentence_text="Old sentence",
+                comment="This number is incorrect; use 10M not 5M.",
+            )
+        ],
+        response_comments=["Add missing coverage for shutdown planning."],
+    )
+
+    prompt = generation_prompt(request)
+
+    assert "Sentence 3 [CLAIM]" in prompt
+    assert "This number is incorrect; use 10M not 5M." in prompt
+    assert "Response-level comment: Add missing coverage for shutdown planning." in prompt
+    assert "Treat sentence-level reviewer comments as required edits." in prompt
+    assert "Response-level comments indicate missing topics." in prompt
 
 
 def test_generation_prompt_includes_sentence_repair_mode() -> None:

@@ -93,6 +93,19 @@ export function describeUnifiedMatchQuality(
   if (sentenceUnsupported || referenceUnsupported) {
     finalTier = 1;
     detailReason = "unsupported";
+  } else if (context.referenceVerified === true || context.sentenceStatus === "verified") {
+    // Verified evidence should not collapse to weak solely because retrieval_score is low
+    // (common with rank-fusion scoring), even when a citation-to-reference link is missing.
+    if (context.referenceConfidenceLabel === "supported" || context.sentenceStatus === "verified") {
+      finalTier = Math.max(finalTier, tightRace ? 2 : 3) as 1 | 2 | 3 | 4;
+      detailReason = tightRace ? "unknown" : "supported";
+    } else if (context.referenceConfidenceLabel === "partially_supported" || sentencePartiallyVerified) {
+      finalTier = Math.max(finalTier, 2) as 1 | 2 | 3 | 4;
+      detailReason = "partial";
+    } else {
+      finalTier = Math.max(finalTier, 2) as 1 | 2 | 3 | 4;
+      detailReason = "unknown";
+    }
   } else if (sentencePartiallyVerified || referencePartial) {
     finalTier = Math.min(finalTier, 2) as 1 | 2;
     detailReason = "partial";

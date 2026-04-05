@@ -35,52 +35,41 @@ export const api = {
   getSession(sessionId: string) {
     return request<SessionEnvelope>(`/sessions/${sessionId}`);
   },
-  addMismatch(sessionId: string, citationId: number, reviewerNote?: string) {
-    return request<SessionEnvelope>(`/sessions/${sessionId}/feedback/mismatch`, {
+  addComment(sessionId: string, comment: string, sentenceIndex?: number) {
+    return request<SessionEnvelope>(`/sessions/${sessionId}/comments`, {
       method: "POST",
-      body: JSON.stringify({ citation_id: citationId, reviewer_note: reviewerNote }),
+      body: JSON.stringify({ comment, sentence_index: sentenceIndex }),
     });
-  },
-  addDisagreement(sessionId: string, sentenceIndex: number, reviewerNote?: string) {
-    return request<SessionEnvelope>(`/sessions/${sessionId}/feedback/disagreement`, {
-      method: "POST",
-      body: JSON.stringify({ sentence_index: sentenceIndex, reviewer_note: reviewerNote }),
-    });
-  },
-  addFacetGaps(sessionId: string, facets: string[]) {
-    return request<SessionEnvelope>(`/sessions/${sessionId}/feedback/facet-gaps`, {
-      method: "POST",
-      body: JSON.stringify({ facets }),
-    });
-  },
-  supplement(sessionId: string, facets: string[]) {
-    return request<SessionEnvelope>(`/sessions/${sessionId}/supplement`, {
-      method: "POST",
-      body: JSON.stringify({ facets }),
-    });
-  },
-  refine(sessionId: string) {
-    return request<SessionEnvelope>(`/sessions/${sessionId}/refine`, { method: "POST" });
   },
   scopedRetrieval(sessionId: string, sentenceIndex: number, citationId: number) {
-    return request<{ citations: CitationIndexEntry[] }>(`/sessions/${sessionId}/scoped-retrieval`, {
-      method: "POST",
-      body: JSON.stringify({ sentence_index: sentenceIndex, citation_id: citationId, top_k: 3 }),
-    });
+    return request<{ citations: CitationIndexEntry[] }>(
+      `/sessions/${sessionId}/citations/${citationId}/scoped`,
+      {
+        method: "POST",
+        body: JSON.stringify({ sentence_index: sentenceIndex }),
+      },
+    );
   },
-  replaceCitation(sessionId: string, sentenceIndex: number, citationId: number, replacementChunkId: string) {
-    return request<SessionEnvelope>(`/sessions/${sessionId}/citations/replace`, {
+  replaceCitation(
+    sessionId: string,
+    sentenceIndex: number,
+    citationId: number,
+    replacementChunkId: string,
+  ) {
+    return request<SessionEnvelope>(`/sessions/${sessionId}/citations/${citationId}/replace`, {
       method: "POST",
       body: JSON.stringify({
         sentence_index: sentenceIndex,
-        citation_id: citationId,
         replacement_chunk_id: replacementChunkId,
       }),
     });
   },
   undoReplacement(sessionId: string, citationId: number) {
-    return request<SessionEnvelope>(`/sessions/${sessionId}/citations/${citationId}/replacement`, {
-      method: "DELETE",
+    return request<SessionEnvelope>(`/sessions/${sessionId}/citations/${citationId}/undo`, {
+      method: "POST",
     });
+  },
+  refine(sessionId: string) {
+    return request<SessionEnvelope>(`/sessions/${sessionId}/refine`, { method: "POST" });
   },
 };

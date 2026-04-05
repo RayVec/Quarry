@@ -22,6 +22,7 @@ class SentenceRegenerator:
         sentence: ParsedSentence,
         citation_index: list[CitationIndexEntry],
         *,
+        failed_sentence_comment: str | None = None,
         failed_regeneration_response: str | None = None,
     ) -> GenerationRequest:
         return GenerationRequest(
@@ -30,6 +31,7 @@ class SentenceRegenerator:
             citation_index=self._rank_citations(sentence, citation_index),
             mode="regeneration",
             failed_sentence_text=sentence.sentence_text,
+            failed_sentence_comment=failed_sentence_comment,
             failed_regeneration_response=failed_regeneration_response,
         )
 

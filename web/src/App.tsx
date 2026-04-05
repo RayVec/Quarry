@@ -1,4 +1,4 @@
-import { startTransition, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { startTransition, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { Cog, Trash2 } from "lucide-react";
 import { api } from "./api";
 import { CitationDialog } from "./components/CitationDialog";
@@ -316,7 +316,7 @@ export default function App() {
   const resumedPersistedPendingRef = useRef(false);
   const workspaceColumnRef = useRef<HTMLElement | null>(null);
   const dockedComposerRef = useRef<HTMLFormElement | null>(null);
-  const [needsDockedComposerOffset, setNeedsDockedComposerOffset] = useState(false);
+  const [dockedComposerOffset, setDockedComposerOffset] = useState(0);
 
   const latestAssistant = useMemo(
     () => [...thread].reverse().find(isAssistantEntry) ?? null,
@@ -366,7 +366,7 @@ export default function App() {
 
   useLayoutEffect(() => {
     if (!thread.length) {
-      setNeedsDockedComposerOffset(false);
+      setDockedComposerOffset(0);
       return;
     }
 
@@ -374,14 +374,14 @@ export default function App() {
       const workspaceColumn = workspaceColumnRef.current;
       const dockedComposer = dockedComposerRef.current;
       if (!workspaceColumn || !dockedComposer) {
-        setNeedsDockedComposerOffset(false);
+        setDockedComposerOffset(0);
         return;
       }
 
-      const workspaceColumnRect = workspaceColumn.getBoundingClientRect();
       const dockedComposerRect = dockedComposer.getBoundingClientRect();
       const clearance = 16;
-      setNeedsDockedComposerOffset(workspaceColumnRect.bottom > dockedComposerRect.top - clearance);
+      const nextOffset = Math.ceil(dockedComposerRect.height + clearance);
+      setDockedComposerOffset(nextOffset);
     };
 
     measure();
@@ -546,32 +546,21 @@ export default function App() {
     }
   }
 
-  async function handleSaveDisagreement(entryId: string, sessionId: string, sentenceIndex: number, note: string) {
-    const response = await api.addDisagreement(sessionId, sentenceIndex, note || undefined);
+  async function handleSaveSentenceComment(entryId: string, sessionId: string, sentenceIndex: number, note: string) {
+    const response = await api.addComment(sessionId, note, sentenceIndex);
     startTransition(() => replaceAssistantEntrySession(entryId, response.session));
   }
 
-  async function persistFacetGaps(selectedFacets: string[]) {
-    if (!interactiveAssistant || !selectedFacets.length) {
-      return interactiveAssistant?.session ?? null;
+  async function handleSaveResponseComment(note: string) {
+    if (!interactiveAssistant || !note.trim()) {
+      return;
     }
-    const response = await api.addFacetGaps(interactiveAssistant.session.session_id, selectedFacets);
+    const response = await api.addComment(interactiveAssistant.session.session_id, note.trim());
     startTransition(() => replaceInteractiveSession(response.session));
-    return response.session;
   }
 
-  async function handleSupplement(selectedFacets: string[]) {
-    if (!interactiveAssistant || !selectedFacets.length) return;
-    await persistFacetGaps(selectedFacets);
-    const response = await api.supplement(interactiveAssistant.session.session_id, selectedFacets);
-    startTransition(() => appendAssistantSession(response.session, "supplement"));
-  }
-
-  async function handleRefine(selectedFacets: string[]) {
+  async function handleRefine() {
     if (!interactiveAssistant) return;
-    if (selectedFacets.length) {
-      await persistFacetGaps(selectedFacets);
-    }
     const response = await api.refine(interactiveAssistant.session.session_id);
     startTransition(() => appendAssistantSession(response.session, "refinement"));
   }
@@ -643,7 +632,10 @@ export default function App() {
             />
           </main>
         ) : (
-          <main className={`conversation-stage ${needsDockedComposerOffset ? "with-docked-offset" : ""}`}>
+          <main
+            className="conversation-stage with-docked-offset"
+            style={{ "--docked-composer-offset": `${dockedComposerOffset}px` } as CSSProperties}
+          >
             <section className="workspace-column" ref={workspaceColumnRef}>
               <div className="thread-intro">
                 <div className="thread-intro-copy">
@@ -687,10 +679,10 @@ export default function App() {
                           readOnly,
                         });
                       }}
-                      onSaveDisagreement={(session, sentenceIndex, note) =>
-                        handleSaveDisagreement(entry.id, session.session_id, sentenceIndex, note)
+                      onSaveComment={(session, sentenceIndex, note) =>
+                        handleSaveSentenceComment(entry.id, session.session_id, sentenceIndex, note)
                       }
-                      onSupplement={handleSupplement}
+                      onSaveResponseComment={(_session, note) => handleSaveResponseComment(note)}
                       onRefine={handleRefine}
                       onRunClarificationSuggestion={(suggestion) => void submitQuery(suggestion, { fresh: true })}
                     />

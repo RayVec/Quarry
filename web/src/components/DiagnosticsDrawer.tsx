@@ -75,14 +75,14 @@ export function DiagnosticsDrawer({
                 Refinements: {session.refinement_count}
               </p>
               <p data-testid="status-citations">
-                Citations: {session.citation_index.length}
+                Citations: {session.citation_index?.length ?? 0}
               </p>
               <p data-testid="status-sentences">
-                Sentences: {session.parsed_sentences.length}
+                Sentences: {session.parsed_sentences?.length ?? 0}
               </p>
             </section>
 
-            {session.ui_messages.length ? (
+            {(session.ui_messages?.length ?? 0) ? (
               <section className="drawer-section">
                 <span className="tiny-label">Pipeline messages</span>
                 {session.ui_messages.map((message) => (
@@ -97,7 +97,7 @@ export function DiagnosticsDrawer({
               </section>
             ) : null}
 
-            {session.retrieval_diagnostics.length ? (
+            { (session.retrieval_diagnostics?.length ?? 0 ) ? (
               <section className="drawer-section">
                 <span className="tiny-label">Retrieval diagnostics</span>
                 {session.retrieval_diagnostics.map((diagnostic) => (
@@ -119,7 +119,7 @@ export function DiagnosticsDrawer({
 
             <section className="drawer-section">
               <span className="tiny-label">Local model status</span>
-              {Object.entries(session.local_model_status).map(
+              {Object.entries(session.local_model_status ?? {}).map(
                 ([key, value]) => (
                   <div className="diagnostic-row" key={key}>
                     <strong>{key}</strong>

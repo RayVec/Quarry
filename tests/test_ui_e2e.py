@@ -123,7 +123,6 @@ def run_query(page: Page, query: str | None = None) -> None:
     )
     page.get_by_test_id("run-query").click()
     expect(page.get_by_test_id("conversation-thread")).to_be_visible()
-    expect(page.get_by_test_id("pending-response")).to_be_visible()
     expect(page.locator("[data-testid^='citation-']").first).to_be_visible(timeout=20000)
     open_diagnostics(page)
     expect(page.get_by_test_id("status-mode")).to_contain_text("response_review")
@@ -139,7 +138,7 @@ def test_response_review_dialog_and_feedback_flow(page: Page, web_server) -> Non
     page.get_by_test_id("mismatch-note").fill("The first passage is directionally right but I want a stronger local citation.")
     page.get_by_test_id("save-mismatch").click()
     page.get_by_test_id("show-more-citations").click()
-    replacement = page.get_by_test_id("replace-citation-cii-005")
+    replacement = page.locator("[data-testid^='replace-citation-']").first
     expect(replacement).to_be_visible()
     replacement.click()
 
@@ -147,7 +146,7 @@ def test_response_review_dialog_and_feedback_flow(page: Page, web_server) -> Non
     expect(page.locator(".citation-pill.replaced").first).to_be_visible()
 
     page.get_by_test_id("toggle-review-panel").click()
-    expect(page.get_by_test_id("feedback-summary")).to_contain_text("1 citations flagged as mismatch, 0 claim disagreements")
+    expect(page.get_by_test_id("feedback-summary")).to_contain_text("1 comments captured, 1 citation replacements pending.")
 
     page.locator("[data-testid^='citation-']").first.click()
     page.get_by_test_id("undo-citation-replacement").click()
@@ -156,10 +155,10 @@ def test_response_review_dialog_and_feedback_flow(page: Page, web_server) -> Non
     page.locator("[data-testid^='disagree-']").first.click()
     page.get_by_test_id("disagreement-note").fill("This claim still needs a tighter explanation of how procurement sequencing affects schedule risk.")
     page.get_by_test_id("save-disagreement").click()
-    expect(page.get_by_test_id("feedback-summary")).to_contain_text("1 citations flagged as mismatch, 1 claim disagreements")
+    expect(page.get_by_test_id("feedback-summary")).to_contain_text("2 comments captured, 0 citation replacements pending.")
 
 
-def test_supplement_and_refinement_flow(page: Page, web_server) -> None:
+def test_unified_refinement_flow(page: Page, web_server) -> None:
     run_query(page, "How do modular construction and procurement planning affect schedule risk?")
 
     open_diagnostics(page)
@@ -167,19 +166,16 @@ def test_supplement_and_refinement_flow(page: Page, web_server) -> None:
     close_diagnostics(page)
 
     page.get_by_test_id("toggle-review-panel").click()
-    page.locator("[data-testid^='facet-toggle-']").first.check()
-    page.get_by_test_id("supplement-selected-facets").click()
+    page.get_by_test_id("toggle-response-comment").click()
+    page.get_by_test_id("response-comment").fill("Please add detail about shutdown planning risks.")
+    page.get_by_test_id("save-response-comment").click()
+    expect(page.get_by_test_id("feedback-summary")).to_contain_text("1 comments captured, 0 citation replacements pending.")
 
-    expect(page.locator(".thread-message.assistant-message")).to_have_count(2)
-    open_diagnostics(page)
-    assert parse_metric(page.get_by_test_id("status-sentences").inner_text()) > initial_sentences
-    close_diagnostics(page)
-
-    page.get_by_test_id("toggle-review-panel").click()
     page.get_by_test_id("run-refinement").click()
-    expect(page.locator(".thread-message.assistant-message")).to_have_count(3)
+    expect(page.locator(".thread-message.assistant-message")).to_have_count(2)
 
     open_diagnostics(page)
+    assert parse_metric(page.get_by_test_id("status-sentences").inner_text()) >= initial_sentences
     expect(page.get_by_test_id("status-refinements")).to_have_text("Refinements: 1")
     close_diagnostics(page)
 
@@ -189,13 +185,11 @@ def test_clarification_suggestions_can_rerun_query(page: Page, web_server) -> No
     page.get_by_test_id("query-input").fill("schedule")
     page.get_by_test_id("run-query").click()
 
-    expect(page.get_by_test_id("pending-response")).to_be_visible()
     expect(page.get_by_test_id("clarification-required")).to_be_visible(timeout=20000)
     suggestion = page.locator("[data-testid^='clarification-suggestion-']").first
     expect(suggestion).to_be_visible()
     suggestion.click()
 
-    expect(page.get_by_test_id("pending-response")).to_be_visible()
     expect(page.locator("[data-testid^='citation-']").first).to_be_visible(timeout=20000)
     open_diagnostics(page)
     expect(page.get_by_test_id("status-mode")).to_contain_text("response_review")

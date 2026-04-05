@@ -6,26 +6,25 @@ import {
   useRef,
   useState,
 } from "react";
-import { Check, Minus, Plus, X } from "lucide-react";
+import { Check, Minus, X } from "lucide-react";
 import { api } from "../api";
 import type { CitationIndexEntry, Reference, SessionState } from "../types";
 import { buildDisplayCitationMap } from "../utils/citationDisplay";
 import { lockBodyScroll, unlockBodyScroll } from "../utils/bodyScrollLock";
-import type { UnifiedMatchLevel } from "../utils/retrievalDisplay";
-import { describeUnifiedMatchQuality } from "../utils/retrievalDisplay";
+import type { MatchQuality } from "../types";
 
 const MATCH_QUALITY_ICON_SIZE = 18;
 const MATCH_QUALITY_ICON_STROKE = 2.3;
 
-function MatchQualityIcon({ level }: { level: UnifiedMatchLevel }) {
+function MatchQualityIcon({ level }: { level: MatchQuality }) {
   const common = { size: MATCH_QUALITY_ICON_SIZE, strokeWidth: MATCH_QUALITY_ICON_STROKE, "aria-hidden": true as const };
   switch (level) {
     case "strong":
       return <Check {...common} />;
-    case "good":
-      return <Plus {...common} />;
-    case "fair":
+    case "partial":
       return <Minus {...common} />;
+    case "none":
+      return null;
     default:
       return <X {...common} />;
   }
@@ -146,29 +145,28 @@ export function CitationDialog({
       null
     );
   }, [sourceSentence, citation.citation_id, referenceQuote]);
-  const matchQuality = useMemo(
-    () =>
-      describeUnifiedMatchQuality(
-        citation.retrieval_score,
-        citation.ambiguity_review_required,
-        citation.ambiguity_gap,
-        {
-          sentenceStatus: sourceSentence?.status,
-          referenceVerified: sourceReference?.verified,
-          referenceConfidenceLabel: sourceReference?.confidence_label,
-          referenceConfidenceUnknown: sourceReference?.confidence_unknown,
-        },
-      ),
-    [
-      citation.retrieval_score,
-      citation.ambiguity_review_required,
-      citation.ambiguity_gap,
-      sourceSentence?.status,
-      sourceReference?.verified,
-      sourceReference?.confidence_label,
-      sourceReference?.confidence_unknown,
-    ],
-  );
+  const matchQuality = useMemo(() => {
+    const level: MatchQuality = sourceSentence?.match_quality ?? "none";
+    if (level === "strong") {
+      return {
+        level,
+        headline: "Strong match",
+        detail: "This passage clearly supports the sentence.",
+      };
+    }
+    if (level === "partial") {
+      return {
+        level,
+        headline: "Partial match",
+        detail: "This passage is grounded, but you may want to inspect the source context.",
+      };
+    }
+    return {
+      level,
+      headline: "No citation expected",
+      detail: "This sentence is structural or inferential, so no citation badge is shown in the response.",
+    };
+  }, [sourceSentence?.match_quality]);
 
   useEffect(() => {
     lockBodyScroll();
@@ -205,10 +203,10 @@ export function CitationDialog({
   }
 
   async function handleMismatch() {
-    const response = await api.addMismatch(
+    const response = await api.addComment(
       session.session_id,
-      citation.citation_id,
-      mismatchNote || undefined,
+      mismatchNote || "Citation does not support this sentence.",
+      sentenceIndex,
     );
     startTransition(() => {
       onSessionUpdate(response.session);
@@ -279,7 +277,7 @@ export function CitationDialog({
             <section className="drawer-section citation-drawer-info-card citation-drawer-info-card--match-quality">
               <span className="tiny-label">Match quality</span>
               <div
-                className={`retrieval-strength retrieval-strength--${matchQuality.level}`}
+                className={`retrieval-strength retrieval-strength--${matchQuality.level === "partial" ? "fair" : matchQuality.level}`}
               >
                 <div className="retrieval-strength-headline-row">
                   <span className="retrieval-strength-icon">
@@ -319,43 +317,44 @@ export function CitationDialog({
             <span className="tiny-label">Mark as mismatch</span>
             <textarea
               data-testid="mismatch-note"
-              disabled={readOnly}
+              placeholder="Optional note for why this citation does not support the sentence."
               value={mismatchNote}
               onChange={(event) => setMismatchNote(event.target.value)}
-              placeholder="Optional note for why this passage does not support the sentence."
-            />
-            <button
-              data-testid="save-mismatch"
-              className="ghost-button"
               disabled={readOnly}
-              onClick={handleMismatch}
-            >
-              Save mismatch
-            </button>
+            />
+            <div className="drawer-action-row">
+              <button
+                data-testid="save-mismatch"
+                className="primary-button subtle"
+                disabled={readOnly}
+                onClick={handleMismatch}
+              >
+                Save mismatch
+              </button>
+            </div>
           </section>
 
           {scopedResults.length ? (
             <section className="drawer-section">
-              <span className="tiny-label">Nearby candidate passages</span>
+              <span className="tiny-label">Alternative passages</span>
               <div className="candidate-list">
-                {scopedResults.map((result) => (
-                  <button
-                    className="candidate-item"
-                    data-testid={`replace-citation-${result.chunk_id}`}
-                    disabled={readOnly}
-                    key={result.chunk_id}
-                    onClick={() => handleReplace(result.chunk_id)}
-                  >
-                    <span className="candidate-meta">
-                      {result.document_title} · {result.section_heading} · p.{" "}
-                      {result.page_number}
-                    </span>
-                    <span>{result.text}</span>
-                  </button>
+                {scopedResults.map((candidate) => (
+                  <article className="candidate-item" key={candidate.chunk_id}>
+                    <p>{candidate.text}</p>
+                    <button
+                      data-testid={`replace-citation-${candidate.chunk_id}`}
+                      className="ghost-button"
+                      disabled={readOnly}
+                      onClick={() => handleReplace(candidate.chunk_id)}
+                    >
+                      Replace with this passage
+                    </button>
+                  </article>
                 ))}
               </div>
             </section>
           ) : null}
+
         </div>
       </aside>
     </div>

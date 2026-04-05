@@ -6,6 +6,7 @@ from quarry.domain.models import ParsedSentence, Reference, ReviewWarning, Sente
 
 
 TAG_PATTERN = re.compile(r"\[(CLAIM|SYNTHESIS|STRUCTURE)\]")
+PARA_PATTERN = re.compile(r"\[PARA\]")
 REF_PATTERN = re.compile(r"\[REF:\s*(?:\"([^\"]+)\"|'([^']+)')\s*\]")
 NO_REF_PATTERN = re.compile(r"\[NO_REF\]")
 NUMBER_PATTERN = re.compile(r"\b\d+(?:\.\d+)?%?\b")
@@ -14,48 +15,62 @@ DOMAIN_TERMS = {"schedule", "cost", "risk", "safety", "procurement", "phase", "m
 
 
 def parse_generated_response(raw_response: str) -> list[ParsedSentence]:
-    tagged_blocks = _split_tagged_blocks(raw_response)
-    if not tagged_blocks:
-        return _fallback_parse(raw_response)
-
     parsed_sentences: list[ParsedSentence] = []
-    for index, block in enumerate(tagged_blocks):
-        tag_match = TAG_PATTERN.search(block)
-        if not tag_match:
+    segments = [segment.strip() for segment in PARA_PATTERN.split(raw_response) if segment.strip()] or [raw_response]
+    sentence_index = 0
+    for paragraph_index, segment in enumerate(segments):
+        tagged_blocks = _split_tagged_blocks(segment)
+        if not tagged_blocks:
+            fallback = _fallback_parse(segment)
+            for sentence in fallback:
+                sentence.sentence_index = sentence_index
+                sentence.paragraph_index = paragraph_index
+                parsed_sentences.append(sentence)
+                sentence_index += 1
             continue
-        tag = tag_match.group(1)
-        refs = [match[0] or match[1] for match in REF_PATTERN.findall(block)]
-        no_ref = bool(NO_REF_PATTERN.search(block))
 
-        cleaned_text = TAG_PATTERN.sub("", block, count=1)
-        cleaned_text = REF_PATTERN.sub("", cleaned_text)
-        cleaned_text = NO_REF_PATTERN.sub("", cleaned_text)
-        cleaned_text = re.sub(r"\s+", " ", cleaned_text).strip()
+        for block in tagged_blocks:
+            tag_match = TAG_PATTERN.search(block)
+            if not tag_match:
+                continue
+            tag = tag_match.group(1)
+            refs = [match[0] or match[1] for match in REF_PATTERN.findall(block)]
+            no_ref = bool(NO_REF_PATTERN.search(block))
 
-        sentence_type = _normalize_sentence_type(SentenceType(tag.lower()), len(refs))
-        warnings: list[ReviewWarning] = []
-        if sentence_type == SentenceType.STRUCTURE and _has_factual_tokens(cleaned_text):
-            warnings.append(ReviewWarning.STRUCTURAL_FACT)
-        if len(refs) > 5:
-            warnings.append(ReviewWarning.OVER_CITED)
+            cleaned_text = TAG_PATTERN.sub("", block, count=1)
+            cleaned_text = REF_PATTERN.sub("", cleaned_text)
+            cleaned_text = NO_REF_PATTERN.sub("", cleaned_text)
+            cleaned_text = re.sub(r"\s+", " ", cleaned_text).strip()
 
-        parsed_sentences.append(
-            ParsedSentence(
-                sentence_index=index,
-                sentence_text=cleaned_text,
-                sentence_type=sentence_type,
-                references=[Reference(reference_quote=quote) for quote in refs],
-                status=SentenceStatus.NO_REF if no_ref else SentenceStatus.UNCHECKED,
-                warnings=warnings,
-                raw_text=block.strip(),
+            sentence_type = _normalize_sentence_type(SentenceType(tag.lower()), len(refs))
+            warnings: list[ReviewWarning] = []
+            if sentence_type == SentenceType.STRUCTURE and _has_factual_tokens(cleaned_text):
+                warnings.append(ReviewWarning.STRUCTURAL_FACT)
+            if len(refs) > 5:
+                warnings.append(ReviewWarning.OVER_CITED)
+
+            parsed_sentences.append(
+                ParsedSentence(
+                    sentence_index=sentence_index,
+                    sentence_text=cleaned_text,
+                    sentence_type=sentence_type,
+                    references=[Reference(reference_quote=quote) for quote in refs],
+                    status=SentenceStatus.NO_REF if no_ref else SentenceStatus.UNCHECKED,
+                    warnings=warnings,
+                    raw_text=block.strip(),
+                    paragraph_index=paragraph_index,
+                )
             )
-        )
+            sentence_index += 1
     return parsed_sentences
 
 
 def render_parsed_sentences(parsed_sentences: list[ParsedSentence]) -> str:
     rendered: list[str] = []
+    last_paragraph_index: int | None = None
     for sentence in parsed_sentences:
+        if last_paragraph_index is not None and sentence.paragraph_index != last_paragraph_index:
+            rendered.append("[PARA]")
         tag = f"[{sentence.sentence_type.value.upper()}]"
         body = f"{tag} {sentence.sentence_text}".strip()
         if sentence.status == SentenceStatus.NO_REF:
@@ -64,6 +79,7 @@ def render_parsed_sentences(parsed_sentences: list[ParsedSentence]) -> str:
             for reference in sentence.references:
                 body = f'{body} [REF: "{reference.reference_quote.replace(chr(34), chr(39))}"]'
         rendered.append(body.strip())
+        last_paragraph_index = sentence.paragraph_index
     return "\n\n".join(rendered)
 
 

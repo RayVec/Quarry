@@ -1,124 +1,116 @@
 import { startTransition, useState } from "react";
+import { MessageSquare } from "lucide-react";
 import type { SessionState } from "../types";
 
 interface ReviewPanelProps {
   session: SessionState;
   interactive: boolean;
-  open: boolean;
-  selectedFacetGaps: string[];
-  onToggle: () => void;
-  onFacetToggle: (facet: string) => void;
-  onSupplement: (selectedFacets: string[]) => Promise<void>;
-  onRefine: (selectedFacets: string[]) => Promise<void>;
-}
-
-function facetChecklistVisible(session: SessionState) {
-  return session.query_type === "multi_hop" && session.facets.length > 1;
+  onSaveResponseComment: (note: string) => Promise<void>;
+  onRefine: () => Promise<void>;
 }
 
 export function ReviewPanel({
   session,
   interactive,
-  open,
-  selectedFacetGaps,
-  onToggle,
-  onFacetToggle,
-  onSupplement,
+  onSaveResponseComment,
   onRefine,
 }: ReviewPanelProps) {
-  const [busy, setBusy] = useState<"supplement" | "refine" | null>(null);
-  const mismatchCount = session.feedback.citation_mismatches.length;
-  const disagreementCount = session.feedback.claim_disagreements.length;
-  const replacementCount = session.feedback.citation_replacements.length;
-  const persistedFacetCount = session.feedback.facet_gaps.length;
-  const effectiveFacetGapCount = new Set([...session.feedback.facet_gaps, ...selectedFacetGaps]).size;
+  const [busy, setBusy] = useState<"comment" | "refine" | null>(null);
+  const [responseComment, setResponseComment] = useState("");
+  const [popupOpen, setPopupOpen] = useState(false);
+  const [open, setOpen] = useState(false);
+  const commentCount = session.feedback?.comments?.length ?? 0;
+  const replacementCount = session.feedback?.citation_replacements?.length ?? 0;
   const removedSentenceCount = session.removed_ungrounded_claim_count;
-  const anyFeedback =
-    mismatchCount > 0 ||
-    disagreementCount > 0 ||
-    replacementCount > 0 ||
-    effectiveFacetGapCount > 0;
+  const anyFeedback = commentCount > 0 || replacementCount > 0;
 
   return (
     <section className={`review-panel-shell ${open ? "open" : ""}`} data-testid="review-panel">
-      <button className="review-panel-toggle" data-testid="toggle-review-panel" onClick={onToggle}>
+      <button
+        className="review-panel-toggle"
+        data-testid="toggle-review-panel"
+        onClick={() => setOpen((value) => !value)}
+      >
         <span>Review and refine</span>
         <span>{open ? "Hide" : "Open"}</span>
       </button>
-
       {open ? (
-        <div className="review-panel-body">
-          {facetChecklistVisible(session) ? (
-            <div className="review-panel-section">
-              <span className="tiny-label">Facet completeness</span>
-              <div className="facet-checklist">
-                {session.facets.map((facet) => {
-                  const checked = selectedFacetGaps.includes(facet);
-                  return (
-                    <label className="facet-option" key={facet}>
-                      <input
-                        data-testid={`facet-toggle-${facet.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}`}
-                        disabled={!interactive || busy !== null}
-                        type="checkbox"
-                        checked={checked}
-                        onChange={() => onFacetToggle(facet)}
-                      />
-                      <span>{facet}</span>
-                    </label>
-                  );
-                })}
+        <div className="feedback-action-row">
+      <div className="feedback-stats-group">
+        <div className="feedback-comment-trigger-container">
+          <button
+            className="icon-button"
+            data-testid="toggle-response-comment"
+            onClick={() => {
+              setPopupOpen((prev) => !prev);
+              if (!popupOpen) setResponseComment("");
+            }}
+            disabled={!interactive}
+          >
+            <span className="sr-only">Leave comments</span>
+            <MessageSquare size={18} aria-hidden="true" focusable="false" />
+          </button>
+
+          {popupOpen ? (
+            <div className="feedback-comment-popup">
+              <textarea
+                data-testid="response-comment"
+                disabled={!interactive || busy !== null}
+                value={responseComment}
+                onChange={(event) => setResponseComment(event.target.value)}
+                placeholder="Leave comments for the overall response"
+              />
+              <div className="feedback-comment-popup-actions">
+                <button
+                  className="ghost-button"
+                  disabled={busy !== null}
+                  onClick={() => setPopupOpen(false)}
+                >
+                  Cancel
+                </button>
+                <button
+                  className="primary-button subtle"
+                  data-testid="save-response-comment"
+                  disabled={!interactive || !responseComment.trim() || busy !== null}
+                  onClick={async () => {
+                    setBusy("comment");
+                    try {
+                      await onSaveResponseComment(responseComment.trim());
+                      setResponseComment("");
+                      setPopupOpen(false);
+                    } finally {
+                      startTransition(() => setBusy(null));
+                    }
+                  }}
+                >
+                  {busy === "comment" ? "Saving..." : "Save"}
+                </button>
               </div>
             </div>
           ) : null}
+        </div>
 
-          <div className="review-panel-section">
-            <span className="tiny-label">Feedback summary</span>
-            <p data-testid="feedback-summary">
-              {mismatchCount} citations flagged as mismatch, {disagreementCount} claim disagreements, {effectiveFacetGapCount} facet gaps.
-            </p>
-            {replacementCount ? <p>{replacementCount} citation replacements are still pending regeneration.</p> : null}
-            {removedSentenceCount ? (
-              <p className="review-summary-note">
-                {removedSentenceCount} unverifiable {removedSentenceCount === 1 ? "sentence was" : "sentences were"} removed from the visible response. Use the saved citations and your review notes to investigate what QUARRY could not ground.
-              </p>
-            ) : null}
-            {!persistedFacetCount && !selectedFacetGaps.length && !mismatchCount && !disagreementCount && !replacementCount ? (
-              <p>No feedback has been captured yet.</p>
-            ) : null}
-          </div>
+        <div className="feedback-stats-text" data-testid="feedback-summary">
+          {commentCount} comments captured, {replacementCount} citation replacements pending.
+          {removedSentenceCount ? ` · ${removedSentenceCount} unverified removed` : ""}
+        </div>
+      </div>
 
-          <div className="review-panel-actions">
-            <button
-              className="ghost-button"
-              data-testid="supplement-selected-facets"
-              disabled={!interactive || !selectedFacetGaps.length || busy !== null}
-              onClick={async () => {
-                setBusy("supplement");
-                try {
-                  await onSupplement(selectedFacetGaps);
-                } finally {
-                  startTransition(() => setBusy(null));
-                }
-              }}
-            >
-              {busy === "supplement" ? "Adding coverage..." : "Supplement"}
-            </button>
-            <button
-              className="primary-button subtle"
-              data-testid="run-refinement"
-              disabled={!interactive || !anyFeedback || busy !== null}
-              onClick={async () => {
-                setBusy("refine");
-                try {
-                  await onRefine(selectedFacetGaps);
-                } finally {
-                  startTransition(() => setBusy(null));
-                }
-              }}
-            >
-              {busy === "refine" ? "Refining..." : "Refine"}
-            </button>
-          </div>
+      <button
+        className="primary-button subtle"
+        data-testid="run-refinement"
+        disabled={!interactive || !anyFeedback || busy !== null}
+        onClick={async () => {
+          setBusy("refine");
+          try {
+            await onRefine();
+          } finally {
+            startTransition(() => setBusy(null));
+          }
+        }}
+      >
+        {busy === "refine" ? "Refining..." : "Refine"}
+      </button>
         </div>
       ) : null}
     </section>

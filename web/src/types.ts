@@ -26,6 +26,8 @@ export type SentenceStatus =
   | "no_ref"
   | "unchecked";
 
+export type MatchQuality = "strong" | "partial" | "none";
+
 export interface CitationIndexEntry {
   citation_id: number;
   chunk_id: string;
@@ -67,6 +69,8 @@ export interface ParsedSentence {
   sentence_type: "claim" | "synthesis" | "structure";
   references: Reference[];
   status: SentenceStatus;
+  match_quality: MatchQuality;
+  paragraph_index: number;
   warnings: string[];
   raw_text: string;
   disagreement_flagged: boolean;
@@ -99,9 +103,12 @@ export interface FacetRetrievalDiagnostic {
 }
 
 export interface FeedbackState {
-  citation_mismatches: Array<{ citation_id: number; reviewer_note?: string | null }>;
-  claim_disagreements: Array<{ sentence_index: number; sentence_text: string; reviewer_note?: string | null }>;
-  facet_gaps: string[];
+  comments: Array<{
+    sentence_index?: number | null;
+    sentence_type?: "claim" | "synthesis" | "structure" | null;
+    sentence_text?: string | null;
+    comment: string;
+  }>;
   citation_replacements: Array<{ citation_id: number; replacement_chunk_id: string }>;
 }
 

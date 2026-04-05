@@ -6,15 +6,12 @@ from uuid import uuid4
 from quarry.adapters.interfaces import ChunkStore
 from quarry.domain.models import (
     CitationIndexEntry,
-    CitationMismatch,
-    CitationMismatchRequest,
     CitationReplacement,
     CitationReplacementRequest,
-    ClaimDisagreement,
-    ClaimDisagreementRequest,
-    FacetGapRequest,
+    ConfidenceLabel,
     FeedbackState,
     GenerationRequest,
+    MatchQuality,
     ParsedSentence,
     QueryRequest,
     QueryProgressStage,
@@ -22,8 +19,10 @@ from quarry.domain.models import (
     ResponseMode,
     ReviewWarning,
     RetrievalFilters,
+    ScopedRetrievalEnvelope,
     QueryType,
-    ScopedRetrievalRequest,
+    ReviewComment,
+    ReviewCommentRequest,
     SessionState,
     SentenceStatus,
     SentenceType,
@@ -47,6 +46,7 @@ class PipelineService:
     SINGLE_HOP_GENERATION_MAX_CITATIONS = 8
     REGENERATION_SIMILARITY_THRESHOLD = 0.8
     REGENERATION_MIN_QUOTE_WORDS = 8
+    REFINE_PROMPT_WINDOW_RATIO = 0.8
 
     def __init__(
         self,
@@ -414,294 +414,228 @@ class PipelineService:
     def close_session(self, session_id: str) -> None:
         self.session_store.delete(session_id)
 
-    def add_citation_mismatch(self, session_id: str, request: CitationMismatchRequest) -> SessionState:
+    def add_review_comment(self, session_id: str, request: ReviewCommentRequest) -> SessionState:
         session = self.session_store.get(session_id)
-        session.feedback.citation_mismatches.append(CitationMismatch(citation_id=request.citation_id, reviewer_note=request.reviewer_note))
-        return self.session_store.save(session)
-
-    def add_claim_disagreement(self, session_id: str, request: ClaimDisagreementRequest) -> SessionState:
-        session = self.session_store.get(session_id)
-        sentence = session.parsed_sentences[request.sentence_index]
-        sentence.disagreement_flagged = True
-        session.feedback.claim_disagreements.append(
-            ClaimDisagreement(
+        sentence_type = None
+        sentence_text = None
+        if request.sentence_index is not None:
+            sentence = session.parsed_sentences[request.sentence_index]
+            sentence.disagreement_flagged = True
+            sentence_type = sentence.sentence_type
+            sentence_text = sentence.sentence_text
+        session.feedback.comments.append(
+            ReviewComment(
                 sentence_index=request.sentence_index,
-                sentence_text=sentence.sentence_text,
-                reviewer_note=request.reviewer_note,
+                sentence_type=sentence_type,
+                sentence_text=sentence_text,
+                comment=request.comment.strip(),
             )
         )
         return self.session_store.save(session)
 
-    def add_facet_gaps(self, session_id: str, request: FacetGapRequest) -> SessionState:
+    async def scoped_retrieval(self, session_id: str, sentence_index: int, citation_id: int) -> ScopedRetrievalEnvelope:
         session = self.session_store.get(session_id)
-        for facet in request.facets:
-            if facet not in session.feedback.facet_gaps:
-                session.feedback.facet_gaps.append(facet)
-        return self.session_store.save(session)
-
-    async def scoped_retrieval(self, session_id: str, request: ScopedRetrievalRequest) -> list[CitationIndexEntry]:
-        scoped_start = timed()
-        session = self.session_store.get(session_id)
-        sentence = session.parsed_sentences[request.sentence_index]
-        citation = next((entry for entry in session.citation_index if entry.citation_id == request.citation_id), None)
-        if citation is None:
-            return []
-        passages, _ = await self.hybrid_retriever.scoped_retrieve(
-            query=sentence.sentence_text,
-            source_facet=citation.source_facet,
-            filters=RetrievalFilters(document_id=citation.document_id, section_path=citation.section_path),
-            top_k=request.top_k or self.scoped_top_k,
-        )
-        starting_id = max((entry.citation_id for entry in session.citation_index), default=0) + 1
-        citations = build_citation_index(passages, starting_id=starting_id, ambiguity_gap_threshold=self.ambiguity_gap_threshold)
-        logger.info(
-            "scoped retrieval complete",
-            extra={
-                "session_id": session_id,
-                "sentence_index": request.sentence_index,
-                "citation_id": request.citation_id,
-                "candidate_count": len(citations),
-                "latency_ms": elapsed_ms(scoped_start),
-            },
-        )
-        return citations
-
-    def replace_citation(self, session_id: str, request: CitationReplacementRequest) -> SessionState:
-        session = self.session_store.get(session_id)
-        replacement_chunk = self.chunk_store.get_chunk(request.replacement_chunk_id)
-        citation = next((entry for entry in session.citation_index if entry.citation_id == request.citation_id), None)
-        if replacement_chunk is None or citation is None:
-            return session
-
-        original_chunk_id = citation.chunk_id
-        citation.chunk_id = replacement_chunk.chunk_id
-        citation.text = replacement_chunk.text
-        citation.document_id = replacement_chunk.document_id
-        citation.document_title = replacement_chunk.document_title
-        citation.section_heading = replacement_chunk.section_heading
-        citation.section_path = replacement_chunk.section_path
-        citation.page_number = replacement_chunk.page_start
-        citation.page_end = replacement_chunk.page_end
-        citation.replacement_pending = True
-        citation.reviewer_note = request.reviewer_note
-
-        sentence = session.parsed_sentences[request.sentence_index]
-        for reference in sentence.references:
-            if reference.citation_id == request.citation_id:
-                reference.matched_chunk_id = replacement_chunk.chunk_id
-                reference.verified = False
-                reference.confidence_score = None
-                reference.confidence_label = None
-                reference.replacement_pending = True
-                reference.document_id = replacement_chunk.document_id
-                reference.document_title = replacement_chunk.document_title
-                reference.section_heading = replacement_chunk.section_heading
-                reference.section_path = replacement_chunk.section_path
-                reference.page_number = replacement_chunk.page_start
-        if ReviewWarning.REPLACEMENT_PENDING not in sentence.warnings:
-            sentence.warnings.append(ReviewWarning.REPLACEMENT_PENDING)
-        session.feedback.citation_replacements.append(
-            CitationReplacement(
-                sentence_index=request.sentence_index,
-                citation_id=request.citation_id,
-                original_chunk_id=original_chunk_id,
-                replacement_chunk_id=replacement_chunk.chunk_id,
-                reviewer_note=request.reviewer_note,
-            )
-        )
-        return self.session_store.save(session)
-
-    def undo_citation_replacement(self, session_id: str, citation_id: int) -> SessionState:
-        session = self.session_store.get(session_id)
-        replacement = next((item for item in reversed(session.feedback.citation_replacements) if item.citation_id == citation_id), None)
-        citation = next((entry for entry in session.citation_index if entry.citation_id == citation_id), None)
-        if replacement is None or citation is None:
-            return session
-        original_chunk = self.chunk_store.get_chunk(replacement.original_chunk_id)
-        if original_chunk is None:
-            return session
-
-        citation.chunk_id = original_chunk.chunk_id
-        citation.text = original_chunk.text
-        citation.document_id = original_chunk.document_id
-        citation.document_title = original_chunk.document_title
-        citation.section_heading = original_chunk.section_heading
-        citation.section_path = original_chunk.section_path
-        citation.page_number = original_chunk.page_start
-        citation.page_end = original_chunk.page_end
-        citation.replacement_pending = False
-        citation.reviewer_note = None
-
-        sentence = session.parsed_sentences[replacement.sentence_index]
-        for reference in sentence.references:
-            if reference.citation_id == citation_id:
-                reference.matched_chunk_id = original_chunk.chunk_id
-                reference.verified = False
-                reference.confidence_score = None
-                reference.confidence_label = None
-                reference.replacement_pending = False
-                reference.document_id = original_chunk.document_id
-                reference.document_title = original_chunk.document_title
-                reference.section_heading = original_chunk.section_heading
-                reference.section_path = original_chunk.section_path
-                reference.page_number = original_chunk.page_start
-        sentence.warnings = [warning for warning in sentence.warnings if warning != ReviewWarning.REPLACEMENT_PENDING]
-
-        session.feedback.citation_replacements = [item for item in session.feedback.citation_replacements if item is not replacement]
-        return self.session_store.save(session)
-
-    async def supplement_response(self, session_id: str, request: FacetGapRequest) -> SessionState:
-        supplement_start = timed()
-        session = self.session_store.get(session_id)
-        if not request.facets:
-            return session
-
-        new_passages, diagnostics = await self.hybrid_retriever.retrieve(original_query=session.original_query, facets=request.facets)
-        session.retrieval_diagnostics.extend(diagnostics)
-        logger.info(
-            "supplement retrieval complete",
-            extra={
-                "session_id": session_id,
-                "selected_facets": request.facets,
-                "diagnostics": [diagnostic.model_dump() for diagnostic in diagnostics],
-                "console_visible": False,
-            },
-        )
-        new_citations = self._append_unique_citations(
-            session.citation_index,
-            build_citation_index(
-                new_passages,
-                starting_id=max((entry.citation_id for entry in session.citation_index), default=0) + 1,
-                ambiguity_gap_threshold=self.ambiguity_gap_threshold,
-            ),
-        )
-        generation_request = GenerationRequest(
+        if sentence_index < 0 or sentence_index >= len(session.parsed_sentences):
+            return ScopedRetrievalEnvelope(citations=[])
+        sentence = session.parsed_sentences[sentence_index]
+        seed = next((entry for entry in session.citation_index if entry.citation_id == citation_id), None)
+        if seed is None:
+            return ScopedRetrievalEnvelope(citations=[])
+        facets = [sentence.sentence_text] if sentence.sentence_text.strip() else session.facets
+        passages, _diagnostics = await self.hybrid_retriever.retrieve(
             original_query=session.original_query,
-            facets=session.facets,
-            citation_index=new_citations,
-            mode="supplement",
-            existing_response=session.generated_response,
-            selected_facets=request.facets,
+            facets=facets or session.facets,
+            query_type=session.query_type,
         )
-        logger.info(
-            "supplement generation started",
-            extra={
-                "session_id": session_id,
-                "selected_facets": request.facets,
-                "citation_count": len(new_citations),
-            },
+        scoped = build_citation_index(
+            passages,
+            starting_id=max((entry.citation_id for entry in session.citation_index), default=0) + 1,
+            ambiguity_gap_threshold=self.ambiguity_gap_threshold,
         )
-        supplemental_raw = await self._generate_with_retry(generation_request)
-        if supplemental_raw is None:
-            session.ui_messages.append(
-                UIMessage(
-                    level=UIMessageLevel.ERROR,
-                    code="supplement_failed",
-                    message="Supplementary generation was unsuccessful; the current response was preserved.",
-                )
+        existing_chunk_ids = {entry.chunk_id for entry in session.citation_index}
+        filtered = [entry for entry in scoped if entry.chunk_id not in existing_chunk_ids][: self.scoped_top_k]
+        if filtered:
+            return ScopedRetrievalEnvelope(citations=filtered)
+
+        fallback_candidates = [
+            chunk
+            for chunk in self.chunk_store.all_chunks()
+            if chunk.chunk_id not in existing_chunk_ids and chunk.chunk_id != seed.chunk_id
+        ][: self.scoped_top_k]
+        fallback = [
+            CitationIndexEntry(
+                citation_id=max((entry.citation_id for entry in session.citation_index), default=0) + index + 1,
+                chunk_id=chunk.chunk_id,
+                text=chunk.text,
+                document_id=chunk.document_id,
+                document_title=chunk.document_title,
+                section_heading=chunk.section_heading,
+                section_path=chunk.section_path,
+                page_number=chunk.page_start,
+                page_end=chunk.page_end,
+                retrieval_score=0.0,
+                source_facet="scoped_fallback",
             )
-            logger.info(
-                "supplement generation failed",
-                extra={"session_id": session_id, "latency_ms": elapsed_ms(supplement_start)},
-            )
+            for index, chunk in enumerate(fallback_candidates)
+        ]
+        return ScopedRetrievalEnvelope(citations=fallback)
+
+    def replace_citation(
+        self,
+        session_id: str,
+        sentence_index: int,
+        citation_id: int,
+        request: CitationReplacementRequest,
+    ) -> SessionState:
+        session = self.session_store.get(session_id)
+        replacement = next((entry for entry in self.chunk_store.all_chunks() if entry.chunk_id == request.replacement_chunk_id), None)
+        if replacement is None:
             return self.session_store.save(session)
-        supplemental_response, supplemental_parsed, updated_citations, removed_sentence_count = await self._process_response(supplemental_raw, new_citations)
-        offset = len(session.parsed_sentences)
-        for sentence in supplemental_parsed:
-            sentence.sentence_index += offset
-        session.generated_response = "\n\n".join([part for part in [session.generated_response, supplemental_response] if part.strip()])
-        session.parsed_sentences.extend(supplemental_parsed)
-        session.citation_index = updated_citations
-        session.removed_ungrounded_claim_count += removed_sentence_count
-        if removed_sentence_count:
-            session.ui_messages.append(
-                UIMessage(
-                    level=UIMessageLevel.WARNING,
-                    code="removed_unverified_claims",
-                    message=self._removed_unverified_sentences_message(removed_sentence_count),
-                )
+        target = next((entry for entry in session.citation_index if entry.citation_id == citation_id), None)
+        if target is not None:
+            target.chunk_id = replacement.chunk_id
+            target.text = replacement.text
+            target.document_id = replacement.document_id
+            target.document_title = replacement.document_title
+            target.section_heading = replacement.section_heading
+            target.section_path = replacement.section_path
+            target.page_number = replacement.page_start
+            target.page_end = replacement.page_end
+            target.replacement_pending = True
+            target.reviewer_note = "Reviewer selected replacement passage."
+
+        if 0 <= sentence_index < len(session.parsed_sentences):
+            sentence = session.parsed_sentences[sentence_index]
+            for reference in sentence.references:
+                if reference.citation_id == citation_id:
+                    reference.matched_chunk_id = replacement.chunk_id
+                    reference.document_id = replacement.document_id
+                    reference.document_title = replacement.document_title
+                    reference.section_heading = replacement.section_heading
+                    reference.section_path = replacement.section_path
+                    reference.page_number = replacement.page_start
+                    reference.replacement_pending = True
+            sentence.match_quality = MatchQuality.PARTIAL
+
+        if not any(
+            replacement.citation_id == citation_id for replacement in session.feedback.citation_replacements
+        ):
+            session.feedback.citation_replacements.append(
+                CitationReplacement(citation_id=citation_id, replacement_chunk_id=request.replacement_chunk_id)
             )
-        for facet in request.facets:
-            if facet not in session.feedback.facet_gaps:
-                session.feedback.facet_gaps.append(facet)
-        logger.info(
-            "supplement complete",
-            extra={
-                "session_id": session_id,
-                "selected_facets": request.facets,
-                "appended_sentence_count": len(supplemental_parsed),
-                "citation_count": len(updated_citations),
-                "latency_ms": elapsed_ms(supplement_start),
-            },
-        )
+        return self.session_store.save(session)
+
+    def undo_replacement(self, session_id: str, citation_id: int) -> SessionState:
+        session = self.session_store.get(session_id)
+        for entry in session.citation_index:
+            if entry.citation_id == citation_id:
+                entry.replacement_pending = False
+                entry.reviewer_note = None
+        for sentence in session.parsed_sentences:
+            for reference in sentence.references:
+                if reference.citation_id == citation_id:
+                    reference.replacement_pending = False
+        session.feedback.citation_replacements = [
+            replacement for replacement in session.feedback.citation_replacements if replacement.citation_id != citation_id
+        ]
         return self.session_store.save(session)
 
     async def refine(self, session_id: str) -> SessionState:
         refine_start = timed()
         session = self.session_store.get(session_id)
         prior_response = session.generated_response
-        extra_citations = list(session.citation_index)
+        working_citations = list(session.citation_index)
+        sentence_comments = [comment for comment in session.feedback.comments if comment.sentence_index is not None]
+        response_comments = [comment.comment for comment in session.feedback.comments if comment.sentence_index is None]
+        replacement_sentence_comments = {
+            comment.sentence_index: comment.comment
+            for comment in sentence_comments
+            if comment.sentence_index is not None
+        }
         logger.info(
             "refinement started",
             extra={
                 "session_id": session_id,
-                "mismatch_count": len(session.feedback.citation_mismatches),
-                "disagreement_count": len(session.feedback.claim_disagreements),
-                "facet_gap_count": len(session.feedback.facet_gaps),
-                "citation_count": len(extra_citations),
+                "comment_count": len(session.feedback.comments),
+                "sentence_comment_count": len(sentence_comments),
             },
         )
-
-        for disagreement in session.feedback.claim_disagreements:
-            if not disagreement.reviewer_note:
-                continue
-            passages, diagnostics = await self.hybrid_retriever.retrieve(
-                original_query=f"{disagreement.sentence_text} {disagreement.reviewer_note}",
-                facets=[f"{disagreement.sentence_text} {disagreement.reviewer_note}"],
-            )
-            session.retrieval_diagnostics.extend(diagnostics)
-            disagreement.contradicting_passages = [passage.chunk.chunk_id for passage in passages[:3]]
-            extra_citations = self._append_unique_citations(
-                extra_citations,
-                build_citation_index(
-                    passages,
-                    starting_id=max((entry.citation_id for entry in extra_citations), default=0) + 1,
-                    ambiguity_gap_threshold=self.ambiguity_gap_threshold,
-                ),
-            )
-
-        if session.feedback.facet_gaps:
-            passages, diagnostics = await self.hybrid_retriever.retrieve(
-                original_query=session.original_query,
-                facets=session.feedback.facet_gaps,
-            )
-            session.retrieval_diagnostics.extend(diagnostics)
-            extra_citations = self._append_unique_citations(
-                extra_citations,
-                build_citation_index(
-                    passages,
-                    starting_id=max((entry.citation_id for entry in extra_citations), default=0) + 1,
-                    ambiguity_gap_threshold=self.ambiguity_gap_threshold,
-                ),
-            )
-
-        mismatch_ids = [mismatch.citation_id for mismatch in session.feedback.citation_mismatches]
-        budgeted_citations = self._trim_citations_to_budget(extra_citations)
-        generation_request = GenerationRequest(
-            original_query=session.original_query,
-            facets=session.facets,
-            citation_index=budgeted_citations,
-            mode="refinement",
-            existing_response=session.generated_response,
-            mismatch_citation_ids=mismatch_ids,
-            disagreement_notes=[disagreement.reviewer_note for disagreement in session.feedback.claim_disagreements if disagreement.reviewer_note],
-            disagreement_contexts=self._build_disagreement_contexts(session),
-        )
         try:
-            raw_response = await self._generate_with_retry(generation_request)
-            if raw_response is None:
-                raise RuntimeError("refinement generation failed")
-            final_response, parsed_sentences, updated_citations, removed_sentence_count = await self._process_response(raw_response, budgeted_citations)
+            step2_rewrites = 0
+            step2_rewrites = 0
+            if replacement_sentence_comments:
+                comment_lines = [f"Sentence {idx}: {note}" for idx, note in sorted(replacement_sentence_comments.items())]
+                refine_request = GenerationRequest(
+                    original_query=session.original_query,
+                    facets=session.facets,
+                    citation_index=self._trim_citations_to_budget(working_citations),
+                    mode="refinement",
+                    existing_response=render_parsed_sentences(session.parsed_sentences),
+                    sentence_comments=[
+                        ReviewComment(
+                            sentence_index=idx,
+                            sentence_type=session.parsed_sentences[idx].sentence_type if idx < len(session.parsed_sentences) else None,
+                            sentence_text=session.parsed_sentences[idx].sentence_text if idx < len(session.parsed_sentences) else None,
+                            comment=note,
+                        )
+                        for idx, note in sorted(replacement_sentence_comments.items())
+                    ],
+                    disagreement_notes=comment_lines,
+                    disagreement_contexts=[],
+                )
+                self._check_refinement_prompt_budget(refine_request, session.parsed_sentences)
+                refined_raw = await self._generate_with_retry(refine_request)
+                if refined_raw is not None:
+                    next_sentences = parse_generated_response(refined_raw)
+                    changed_indices = self._diff_changed_sentence_indices(session.parsed_sentences, next_sentences)
+                    session.parsed_sentences = next_sentences
+                    if changed_indices:
+                        session.parsed_sentences, working_citations = await self._verify_and_reindex_changed_sentences(
+                            session.parsed_sentences,
+                            working_citations,
+                            changed_indices,
+                        )
+                        step2_rewrites = len(changed_indices)
+
+            step3_additions = 0
+            if response_comments:
+                passages, diagnostics = await self.hybrid_retriever.retrieve(
+                    original_query=session.original_query,
+                    facets=response_comments,
+                )
+                session.retrieval_diagnostics.extend(diagnostics)
+                working_citations = self._append_unique_citations(
+                    working_citations,
+                    build_citation_index(
+                        passages,
+                        starting_id=max((entry.citation_id for entry in working_citations), default=0) + 1,
+                        ambiguity_gap_threshold=self.ambiguity_gap_threshold,
+                    ),
+                )
+                supplement_request = GenerationRequest(
+                    original_query=session.original_query,
+                    facets=session.facets,
+                    citation_index=self._trim_citations_to_budget(working_citations),
+                    mode="supplement",
+                    existing_response=render_parsed_sentences(session.parsed_sentences),
+                    response_comments=response_comments,
+                    selected_facets=response_comments,
+                )
+                supplemental_raw = await self._generate_with_retry(supplement_request)
+                if supplemental_raw is not None:
+                    supplemental_parsed = parse_generated_response(supplemental_raw)
+                    offset = len(session.parsed_sentences)
+                    for sentence in supplemental_parsed:
+                        sentence.sentence_index += offset
+                    session.parsed_sentences.extend(supplemental_parsed)
+                    changed_indices = set(range(offset, len(session.parsed_sentences)))
+                    if changed_indices:
+                        session.parsed_sentences, working_citations = await self._verify_and_reindex_changed_sentences(
+                            session.parsed_sentences,
+                            working_citations,
+                            changed_indices,
+                        )
+                        step3_additions = len(changed_indices)
         except Exception:
             session.generated_response = prior_response
             session.ui_messages.append(
@@ -717,13 +651,27 @@ class PipelineService:
             )
             return self.session_store.save(session)
 
-        session.generated_response = final_response
-        session.parsed_sentences = parsed_sentences
-        session.citation_index = updated_citations
+        session.parsed_sentences, removed_sentence_count = self._apply_lingering_grounding_policy(session.parsed_sentences)
+        self._annotate_match_quality(session.parsed_sentences)
+        session.generated_response = render_parsed_sentences(session.parsed_sentences)
+        session.citation_index = working_citations
         session.removed_ungrounded_claim_count = removed_sentence_count
         session.feedback = FeedbackState()
         session.refinement_count += 1
-        session.response_mode = self._determine_response_mode(parsed_sentences)
+        session.response_mode = self._determine_response_mode(session.parsed_sentences)
+        summary_parts: list[str] = []
+        if step2_rewrites:
+            summary_parts.append(f"rewrote {step2_rewrites} sentences")
+        if step3_additions:
+            summary_parts.append(f"added {step3_additions} new sentences")
+        if summary_parts:
+            session.ui_messages.append(
+                UIMessage(
+                    level=UIMessageLevel.INFO,
+                    code="refine_summary",
+                    message=", ".join(summary_parts).capitalize() + ".",
+                )
+            )
         if removed_sentence_count:
             session.ui_messages.append(
                 UIMessage(
@@ -737,8 +685,8 @@ class PipelineService:
             extra={
                 "session_id": session_id,
                 "response_mode": session.response_mode.value,
-                "sentence_summary": self._sentence_status_summary(parsed_sentences),
-                "citation_count": len(updated_citations),
+                "sentence_summary": self._sentence_status_summary(session.parsed_sentences),
+                "citation_count": len(working_citations),
                 "latency_ms": elapsed_ms(refine_start),
             },
         )
@@ -866,6 +814,7 @@ class PipelineService:
 
         parsed_sentences = await self.verifier.score_confidence(parsed_sentences)
         parsed_sentences, removed_sentence_count = self._apply_lingering_grounding_policy(parsed_sentences)
+        self._annotate_match_quality(parsed_sentences)
         logger.info(
             "confidence scoring complete",
             extra={
@@ -1078,23 +1027,71 @@ class PipelineService:
             return False
         return True
 
-    def _build_disagreement_contexts(self, session: SessionState) -> list[str]:
-        contexts: list[str] = []
-        for disagreement in session.feedback.claim_disagreements:
-            if not disagreement.reviewer_note:
+    async def _verify_and_reindex_changed_sentences(
+        self,
+        parsed_sentences: list[ParsedSentence],
+        citation_index: list[CitationIndexEntry],
+        changed_indices: set[int],
+    ) -> tuple[list[ParsedSentence], list[CitationIndexEntry]]:
+        verification = self.verifier.verify_exact_matches(
+            parsed_sentences,
+            list(citation_index),
+            sentence_indices=changed_indices,
+        )
+        verified_sentences = verification.parsed_sentences
+        verified_citations = verification.citation_index
+        scored_sentences = await self.verifier.score_confidence(verified_sentences)
+        for index, sentence in enumerate(scored_sentences):
+            sentence.sentence_index = index
+        return scored_sentences, verified_citations
+
+    def _diff_changed_sentence_indices(
+        self,
+        prior_sentences: list[ParsedSentence],
+        next_sentences: list[ParsedSentence],
+    ) -> set[int]:
+        aligned_prior: set[int] = set()
+        changed_next_indices: set[int] = set()
+        for next_index, next_sentence in enumerate(next_sentences):
+            best_prior_index = -1
+            best_similarity = 0.0
+            for prior_index, prior_sentence in enumerate(prior_sentences):
+                if prior_index in aligned_prior:
+                    continue
+                similarity = self._sentence_similarity(next_sentence.sentence_text, prior_sentence.sentence_text)
+                if similarity > best_similarity:
+                    best_similarity = similarity
+                    best_prior_index = prior_index
+            if best_prior_index < 0 or best_similarity < self.REGENERATION_SIMILARITY_THRESHOLD:
+                changed_next_indices.add(next_index)
                 continue
-            contradicting_texts: list[str] = []
-            for chunk_id in disagreement.contradicting_passages or []:
-                chunk = self.chunk_store.get_chunk(chunk_id)
-                if chunk is not None:
-                    contradicting_texts.append(chunk.text)
-            if contradicting_texts:
-                contexts.append(
-                    f"Sentence {disagreement.sentence_index}: {disagreement.reviewer_note}. Contradicting evidence: {' || '.join(contradicting_texts[:2])}"
-                )
-            else:
-                contexts.append(f"Sentence {disagreement.sentence_index}: {disagreement.reviewer_note}")
-        return contexts
+            aligned_prior.add(best_prior_index)
+        for prior_index, _ in enumerate(prior_sentences):
+            if prior_index not in aligned_prior and prior_index < len(next_sentences):
+                changed_next_indices.add(prior_index)
+        return changed_next_indices
+
+    def _check_refinement_prompt_budget(
+        self,
+        request: GenerationRequest,
+        parsed_sentences: list[ParsedSentence],
+    ) -> None:
+        passage_tokens = sum(len(citation.text.split()) for citation in request.citation_index)
+        response_tokens = sum(len(sentence.sentence_text.split()) for sentence in parsed_sentences)
+        comment_tokens = sum(len(comment.comment.split()) for comment in request.sentence_comments)
+        total_estimate = passage_tokens + response_tokens + comment_tokens
+        threshold = int(self.refinement_token_budget * self.REFINE_PROMPT_WINDOW_RATIO)
+        if total_estimate > threshold:
+            logger.info(
+                "refine prompt approaching window limit",
+                extra={
+                    "estimated_tokens": total_estimate,
+                    "threshold": threshold,
+                    "sentence_count": len(parsed_sentences),
+                    "comment_count": len(request.sentence_comments),
+                    "console_visible": False,
+                },
+            )
 
     def _build_clarification_suggestions(self, query: str) -> list[str]:
         normalized = " ".join(query.split()).strip().rstrip("?")
@@ -1124,6 +1121,30 @@ class PipelineService:
         if removed_sentence_count == 1:
             return "One sentence was removed because it could not be verified against the source documents."
         return f"{removed_sentence_count} sentences were removed because they could not be verified against the source documents."
+
+    def _annotate_match_quality(self, parsed_sentences: list[ParsedSentence]) -> None:
+        for sentence in parsed_sentences:
+            if sentence.sentence_type == SentenceType.STRUCTURE or sentence.status == SentenceStatus.NO_REF:
+                sentence.match_quality = MatchQuality.NONE
+                continue
+
+            verified_refs = [reference for reference in sentence.references if reference.verified]
+            if not verified_refs:
+                sentence.match_quality = MatchQuality.NONE
+                continue
+
+            has_short_anchor = any(
+                reference.minimum_quote_words is not None
+                and reference.minimum_quote_words < self.verifier.DEFAULT_MIN_QUOTE_WORDS
+                for reference in verified_refs
+            )
+            has_partial_label = any(reference.confidence_label == ConfidenceLabel.PARTIALLY_SUPPORTED for reference in verified_refs)
+            has_unknown_confidence = any(reference.confidence_label is None or reference.confidence_unknown for reference in verified_refs)
+
+            if sentence.status == SentenceStatus.VERIFIED and not has_short_anchor and not has_partial_label and not has_unknown_confidence:
+                sentence.match_quality = MatchQuality.STRONG
+            else:
+                sentence.match_quality = MatchQuality.PARTIAL
 
     def _sentence_type_summary(self, parsed_sentences: list) -> dict[str, int]:
         summary = {"claim": 0, "synthesis": 0, "structure": 0, "no_ref": 0}

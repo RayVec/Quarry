@@ -1,5 +1,5 @@
 from quarry.domain.models import SentenceStatus, SentenceType
-from quarry.pipeline.parsing import parse_generated_response
+from quarry.pipeline.parsing import parse_generated_response, render_parsed_sentences
 
 
 def test_parse_generated_response_reclassifies_and_flags_structure() -> None:
@@ -19,3 +19,23 @@ def test_parse_generated_response_reclassifies_and_flags_structure() -> None:
     assert parsed[1].sentence_type == SentenceType.SYNTHESIS
     assert parsed[1].status == SentenceStatus.UNCHECKED
 
+
+def test_parse_generated_response_assigns_paragraph_indices_from_para_markers() -> None:
+    raw_response = """
+    [CLAIM] The detailed scope phase produced engineering outputs and deliverables.
+    [REF: "The detailed scope phase produced engineering outputs and deliverables for front-end design."]
+
+    [PARA]
+
+    [CLAIM] Those outputs became foundational reading material for subsequent planning.
+    [REF: "Those engineering outputs became foundational reading material for subsequent planning decisions."]
+    """
+
+    parsed = parse_generated_response(raw_response)
+
+    assert len(parsed) == 2
+    assert parsed[0].paragraph_index == 0
+    assert parsed[1].paragraph_index == 1
+
+    rendered = render_parsed_sentences(parsed)
+    assert "[PARA]" in rendered

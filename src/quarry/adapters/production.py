@@ -10,6 +10,7 @@ import httpx
 
 from quarry.adapters.in_memory import (
     ConservativeFallbackGenerationClient,
+    DeterministicGenerationClient,
     HashEmbeddingClient,
     HeuristicDecompositionClient,
     HeuristicMetadataEnricher,
@@ -420,9 +421,9 @@ def build_runtime_clients(
             local_status["generation"] = "configured"
             local_status["parser"] = "configured"
         elif settings.uses_mlx_profile:
-            generation = ConservativeFallbackGenerationClient()
-            generation_provider = "fallback:no_ref"
-            local_status["generation"] = "heuristic"
+            generation = HostedGenerationClient(live_llm) if live_llm is not None else DeterministicGenerationClient()
+            generation_provider = f"hosted:{settings.llm_model}" if live_llm is not None else "fallback:deterministic"
+            local_status["generation"] = "hosted" if live_llm is not None else "heuristic"
             local_status["parser"] = "heuristic"
         else:
             generation = LocalStructuredGenerationClient(ensure_local_text_backend())
@@ -430,9 +431,9 @@ def build_runtime_clients(
             local_status["generation"] = "configured"
             local_status["parser"] = "configured"
     else:
-        generation = ConservativeFallbackGenerationClient()
-        generation_provider = "fallback:no_ref"
-        local_status["generation"] = "heuristic"
+        generation = HostedGenerationClient(live_llm) if live_llm is not None else DeterministicGenerationClient()
+        generation_provider = f"hosted:{settings.llm_model}" if live_llm is not None else "fallback:deterministic"
+        local_status["generation"] = "hosted" if live_llm is not None else "heuristic"
         local_status["parser"] = "heuristic"
 
     if settings.use_live_metadata_enrichment and live_llm is not None:

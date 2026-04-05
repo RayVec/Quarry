@@ -11,7 +11,8 @@ from quarry.adapters.in_memory import (
 )
 from quarry.domain.models import (
     ChunkObject,
-    CitationReplacementRequest,
+    ConfidenceLabel,
+    MatchQuality,
     QueryProgressStage,
     QueryRequest,
     QueryRunStatus,
@@ -298,6 +299,7 @@ def test_pipeline_runs_end_to_end_with_sample_components() -> None:
     assert session.runtime_profile.value == "apple_silicon"
     assert session.parser_provider == "mlx-community/Qwen3-VL-4B-Instruct-4bit"
     assert session.active_model_ids[0] == "mlx-community/Qwen3.5-4B-MLX-4bit"
+    assert all(sentence.match_quality in {MatchQuality.STRONG, MatchQuality.PARTIAL, MatchQuality.NONE} for sentence in session.parsed_sentences)
 
 
 def test_begin_query_creates_running_session_with_initial_stage() -> None:
@@ -331,6 +333,41 @@ def test_begin_query_creates_running_session_with_initial_stage() -> None:
     assert service.get_session(session.session_id).session_id == session.session_id
 
 
+def test_pipeline_assigns_partial_match_quality_for_partial_confidence() -> None:
+    chunk_store = InMemoryChunkStore(build_chunks())
+    service = PipelineService(
+        chunk_store=chunk_store,
+        query_decomposer=QueryDecomposer(HeuristicDecompositionClient(), max_facets=4),
+        hybrid_retriever=HybridRetriever(
+            sparse_retriever=KeywordSparseRetriever(chunk_store),
+            dense_retriever=SemanticDenseRetriever(chunk_store),
+            reranker=SimpleCrossEncoderReranker(),
+            sparse_top_k=30,
+            dense_top_k=30,
+            rerank_top_k=20,
+            rrf_k=60,
+        ),
+        answer_generator=AnswerGenerator(DeterministicGenerationClient()),
+        sentence_regenerator=SentenceRegenerator(),
+        verifier=VerificationService(chunk_store=chunk_store, nli_client=HeuristicNLIClient()),
+        session_store=SessionStore(),
+        scoped_top_k=3,
+        refinement_token_budget=8000,
+        ambiguity_gap_threshold=0.05,
+    )
+
+    session = asyncio.run(
+        service.run_query(QueryRequest(query="How do modular construction and procurement planning affect schedule risk?"))
+    )
+    claim = next(sentence for sentence in session.parsed_sentences if sentence.sentence_type.value in {"claim", "synthesis"})
+    claim.status = claim.status
+    if claim.references:
+        claim.references[0].verified = True
+        claim.references[0].confidence_label = ConfidenceLabel.PARTIALLY_SUPPORTED
+    service._annotate_match_quality(session.parsed_sentences)
+    assert claim.match_quality == MatchQuality.PARTIAL
+
+
 def test_run_query_for_session_marks_failed_stage_on_unhandled_error() -> None:
     chunk_store = InMemoryChunkStore(build_chunks())
     session_store = SessionStore()
@@ -361,49 +398,6 @@ def test_run_query_for_session_marks_failed_stage_on_unhandled_error() -> None:
     assert session.query_status == QueryRunStatus.FAILED
     assert session.query_stage == QueryProgressStage.FAILED
     assert any(message.code == "query_failed" for message in session.ui_messages)
-
-
-def test_replace_and_undo_citation_marks_pending_state() -> None:
-    chunk_store = InMemoryChunkStore(build_chunks())
-    service = PipelineService(
-        chunk_store=chunk_store,
-        query_decomposer=QueryDecomposer(HeuristicDecompositionClient(), max_facets=4),
-        hybrid_retriever=HybridRetriever(
-            sparse_retriever=KeywordSparseRetriever(chunk_store),
-            dense_retriever=SemanticDenseRetriever(chunk_store),
-            reranker=SimpleCrossEncoderReranker(),
-            sparse_top_k=30,
-            dense_top_k=30,
-            rerank_top_k=20,
-            rrf_k=60,
-        ),
-        answer_generator=AnswerGenerator(DeterministicGenerationClient()),
-        sentence_regenerator=SentenceRegenerator(),
-        verifier=VerificationService(chunk_store=chunk_store, nli_client=HeuristicNLIClient()),
-        session_store=SessionStore(),
-        scoped_top_k=3,
-        refinement_token_budget=8000,
-        ambiguity_gap_threshold=0.05,
-    )
-    session = asyncio.run(service.run_query(QueryRequest(query="How do modular construction and procurement planning affect schedule risk?")))
-    first_sentence = next(sentence for sentence in session.parsed_sentences if sentence.references)
-    first_reference = next(reference for reference in first_sentence.references if reference.citation_id is not None)
-    alternate_chunk = next(chunk for chunk in build_chunks() if chunk.chunk_id != first_reference.matched_chunk_id)
-
-    replaced = service.replace_citation(
-        session.session_id,
-        CitationReplacementRequest(
-            sentence_index=first_sentence.sentence_index,
-            citation_id=first_reference.citation_id,
-            replacement_chunk_id=alternate_chunk.chunk_id,
-        ),
-    )
-    updated_citation = next(citation for citation in replaced.citation_index if citation.citation_id == first_reference.citation_id)
-    assert updated_citation.replacement_pending is True
-
-    reverted = service.undo_citation_replacement(session.session_id, first_reference.citation_id)
-    restored_citation = next(citation for citation in reverted.citation_index if citation.citation_id == first_reference.citation_id)
-    assert restored_citation.replacement_pending is False
 
 
 def test_generation_retries_on_malformed_first_response() -> None:

@@ -43,7 +43,6 @@ The system prefers a less polished but grounded answer over a fluent but unverif
 
 - exact quote verification
 - NLI confidence scoring
-- mismatch review
 - disagreement review
 - sentence regeneration when grounding fails
 
@@ -394,22 +393,14 @@ The session also records how many ungrounded sentences were removed so the revie
 
 The same service object also handles review mutations:
 
-- add mismatch feedback
-- add disagreement feedback
-- add facet gaps
-- replace citation
-- undo replacement
-- supplement
-- refine
+- add sentence-level or response-level review comments
+- unified refine orchestration
 
 The authoritative reviewer state lives in `SessionState.feedback`.
 
 Important feedback fields:
 
-- `citation_mismatches`
-- `claim_disagreements`
-- `facet_gaps`
-- `citation_replacements`
+- `comments` (sentence-bound or response-level)
 
 ## 9. API Architecture
 
@@ -433,9 +424,7 @@ Important route groups:
 - query start and fetch
 - session fetch and close
 - feedback mutation
-- supplement and refine
-- citation replacement
-- scoped retrieval
+- unified refine
 
 ## 10. Frontend Architecture
 
@@ -477,43 +466,34 @@ Current behavior:
 
 - user query becomes a bubble immediately
 - pending assistant bubble shows real backend progress
-- final assistant message supports inline citation and review actions
+- final assistant message supports paragraph-style reading with inline citation and review actions
 - citation badges shown to users are renumbered contiguously (`[1]..[N]`) for readability; backend/internal citation IDs remain unchanged for review mutations
 - removed-sentence warnings are surfaced to the reviewer in the message and review panel
 - older assistant messages remain visible but read-only
 
-### 10.2.1 Citation drawer and match quality
+### 10.2.1 Paragraph layout and match quality
 
-The citation drawer is `web/src/components/CitationDialog.tsx`. **Match quality** copy is produced by `describeUnifiedMatchQuality()` in `web/src/utils/retrievalDisplay.ts`.
+Generation and parsing now support lightweight paragraph grouping:
 
-**Inputs from the session citation** (see `CitationIndexEntry` and `build_citation_index` in `src/quarry/pipeline/retrieval.py`):
+- generator may insert `[PARA]` markers at topic transitions
+- parser strips markers and assigns `paragraph_index` on each `ParsedSentence`
+- sentence remains the minimum unit for verification, comments, and regeneration
 
-- `retrieval_score` — final passage score after retrieval/reranking. The UI treats this as a **rough ranking signal**, not a calibrated probability (absolute scale can vary by retriever/reranker).
-- `ambiguity_gap` — difference between the top two scores in that retrieval batch (when at least two results exist).
-- `ambiguity_review_required` — set when `ambiguity_gap` is below the backend threshold (default `0.05`, `ambiguity_gap_threshold` in `src/quarry/config.py`).
-- `reference.confidence_label` / `reference.confidence_unknown` — sentence-to-passage verification output from the NLI step for the specific citation reference the user clicked.
-- `sentence.status` — sentence-level verification status (`verified`, `partially_verified`, `ungrounded`, etc.), used as a guardrail so drawer copy stays aligned with the visible answer quality.
+Frontend rendering (`ResponseReview.tsx`) groups by `paragraph_index` and renders sentences in a continuous paragraph flow with inline citation badges.
 
-**Policy (four user-facing levels):** `strong`, `good`, `fair`, `weak` (headlines: Strong / Good / Fair / Weak match).
+The left per-sentence confidence rail has been removed from main reading flow. Citation badges carry the user-facing quality signal:
 
-1. Map `retrieval_score` to an internal retrieval tier: ≥ `0.9`, ≥ `0.72`, ≥ `0.5`, else lowest.
-2. If a comparable `ambiguity_gap` exists, only keep the top retrieval tier when the top result has a clear lead (≥ `0.05`); otherwise cap that step at the next tier down. Missing `ambiguity_gap` does not block a high-scoring citation from reaching the top retrieval tier.
-3. **Tight race:** if `ambiguity_review_required` or `ambiguity_gap` &lt; `0.05`, drop one retrieval tier (not below weak).
-4. Mix in verification signals for the clicked citation:
-   - `sentence.status in {ungrounded, no_ref}` or `reference.confidence_label == not_supported` → `weak`
-   - `sentence.status == partially_verified` or `reference.confidence_label == partially_supported` → cap at `fair`
-   - `sentence.status == unchecked` or `reference.confidence_unknown == true` → cap at `good`
-   - `verified` / `supported` leaves the retrieval-derived tier unchanged
-5. **Detail text**:
+- `match_quality = strong` → green badge
+- `match_quality = partial` → amber badge
+- `match_quality = none` → no badge shown
 
-| Level   | Headline       | Detail (base)                                      |
-|---------|----------------|----------------------------------------------------|
-| strong  | Strong match   | This passage clearly supports the sentence.        |
-| good    | Good match     | This passage supports the sentence.                |
-| fair    | Fair match     | This passage supports only part of the sentence.   |
-| weak    | Weak match     | This passage does not support the sentence.        |
+`match_quality` is computed server-side after verification/NLI scoring:
 
-6. **Invalid score:** non-finite `retrieval_score` → weak, headline “Match quality unknown”, detail: `No retrieval score was available.`
+- `strong`: verified sentence with supported references and no short-anchor downgrade
+- `partial`: partially verified support and/or shorter regeneration anchor
+- `none`: structure/no-ref sentence (or no verified references after filtering)
+
+Raw verification fields (`status`, `confidence_label`, `confidence_score`) remain in the session payload for diagnostics and logging; frontend reading flow relies on `match_quality`.
 
 The diagnostics drawer close button uses the same icon-only pattern and `drawer-close-trigger` styling as the citation drawer.
 

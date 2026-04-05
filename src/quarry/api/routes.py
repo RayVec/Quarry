@@ -5,13 +5,11 @@ import asyncio
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 
 from quarry.domain.models import (
-    CitationMismatchRequest,
     CitationReplacementRequest,
-    ClaimDisagreementRequest,
-    FacetGapRequest,
     QueryRequest,
+    ReviewCommentRequest,
+    ScopedRetrievalEnvelope,
     SessionEnvelope,
-    ScopedRetrievalRequest,
 )
 from quarry.services.pipeline_service import PipelineService
 from quarry.services.session_store import SessionNotFoundError
@@ -79,92 +77,55 @@ async def close_session(session_id: str, service: PipelineService = Depends(get_
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-@router.post("/sessions/{session_id}/feedback/mismatch", response_model=SessionEnvelope)
-async def add_citation_mismatch(
+@router.post("/sessions/{session_id}/comments", response_model=SessionEnvelope)
+async def add_review_comment(
     session_id: str,
-    payload: CitationMismatchRequest,
+    payload: ReviewCommentRequest,
     service: PipelineService = Depends(get_service),
 ) -> SessionEnvelope:
     try:
-        session = service.add_citation_mismatch(session_id, payload)
+        session = service.add_review_comment(session_id, payload)
     except SessionNotFoundError as exc:
         raise HTTPException(status_code=404, detail="Session not found.") from exc
     return SessionEnvelope(session=session)
 
 
-@router.post("/sessions/{session_id}/feedback/disagreement", response_model=SessionEnvelope)
-async def add_claim_disagreement(
-    session_id: str,
-    payload: ClaimDisagreementRequest,
-    service: PipelineService = Depends(get_service),
-) -> SessionEnvelope:
-    try:
-        session = service.add_claim_disagreement(session_id, payload)
-    except SessionNotFoundError as exc:
-        raise HTTPException(status_code=404, detail="Session not found.") from exc
-    return SessionEnvelope(session=session)
-
-
-@router.post("/sessions/{session_id}/feedback/facet-gaps", response_model=SessionEnvelope)
-async def add_facet_gaps(
-    session_id: str,
-    payload: FacetGapRequest,
-    service: PipelineService = Depends(get_service),
-) -> SessionEnvelope:
-    try:
-        session = service.add_facet_gaps(session_id, payload)
-    except SessionNotFoundError as exc:
-        raise HTTPException(status_code=404, detail="Session not found.") from exc
-    return SessionEnvelope(session=session)
-
-
-@router.post("/sessions/{session_id}/scoped-retrieval")
+@router.post("/sessions/{session_id}/citations/{citation_id}/scoped", response_model=ScopedRetrievalEnvelope)
 async def scoped_retrieval(
     session_id: str,
-    payload: ScopedRetrievalRequest,
+    citation_id: int,
+    payload: dict,
     service: PipelineService = Depends(get_service),
-) -> dict[str, object]:
+) -> ScopedRetrievalEnvelope:
     try:
-        citations = await service.scoped_retrieval(session_id, payload)
+        sentence_index = int(payload.get("sentence_index", -1))
+        return await service.scoped_retrieval(session_id, sentence_index, citation_id)
     except SessionNotFoundError as exc:
         raise HTTPException(status_code=404, detail="Session not found.") from exc
-    return {"citations": [citation.model_dump() for citation in citations]}
 
 
-@router.post("/sessions/{session_id}/citations/replace", response_model=SessionEnvelope)
+@router.post("/sessions/{session_id}/citations/{citation_id}/replace", response_model=SessionEnvelope)
 async def replace_citation(
     session_id: str,
+    citation_id: int,
     payload: CitationReplacementRequest,
     service: PipelineService = Depends(get_service),
 ) -> SessionEnvelope:
     try:
-        session = service.replace_citation(session_id, payload)
+        session = service.replace_citation(session_id, payload.sentence_index, citation_id, payload)
     except SessionNotFoundError as exc:
         raise HTTPException(status_code=404, detail="Session not found.") from exc
     return SessionEnvelope(session=session)
 
 
-@router.delete("/sessions/{session_id}/citations/{citation_id}/replacement", response_model=SessionEnvelope)
+@router.post("/sessions/{session_id}/citations/{citation_id}/undo", response_model=SessionEnvelope)
 async def undo_citation_replacement(
     session_id: str,
     citation_id: int,
     service: PipelineService = Depends(get_service),
 ) -> SessionEnvelope:
     try:
-        session = service.undo_citation_replacement(session_id, citation_id)
-    except SessionNotFoundError as exc:
-        raise HTTPException(status_code=404, detail="Session not found.") from exc
-    return SessionEnvelope(session=session)
-
-
-@router.post("/sessions/{session_id}/supplement", response_model=SessionEnvelope)
-async def supplement_response(
-    session_id: str,
-    payload: FacetGapRequest,
-    service: PipelineService = Depends(get_service),
-) -> SessionEnvelope:
-    try:
-        session = await service.supplement_response(session_id, payload)
+        session = service.undo_replacement(session_id, citation_id)
     except SessionNotFoundError as exc:
         raise HTTPException(status_code=404, detail="Session not found.") from exc
     return SessionEnvelope(session=session)

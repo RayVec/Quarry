@@ -210,20 +210,33 @@ Conversation history is frontend-local and browser-persisted:
 
 The current UI keeps review actions but moves them into contextual surfaces:
 
+- paragraph-style reading flow with inline sentence interactions
 - inline disagreement flagging under individual sentences
-- citation drawer for quote context, mismatch marking, replacements, and scoped retrieval
+- citation drawer for quote context
 - displayed citation badges are renumbered contiguously (1..N) for readability, while internal citation IDs remain stable for review actions
 - expandable “Review and refine” panel
 - hidden diagnostics drawer for runtime and retrieval details
 
-The backend still exposes the same core review actions:
+Response rendering now uses paragraph grouping markers from generation/parsing:
 
-- mismatch feedback
-- disagreement feedback
-- facet-gap feedback
-- supplement
-- refine
-- citation replacement / undo replacement
+- generator can emit `[PARA]` between topic shifts
+- parser assigns `paragraph_index` per sentence
+- frontend renders sentence text continuously within each paragraph
+
+Frontend citation quality display now consumes a single sentence-level field:
+
+- `match_quality = strong | partial | none`
+- `strong` renders a green citation badge
+- `partial` renders an amber citation badge
+- `none` shows no badge (for structural or no-ref sentences)
+
+Raw `status` and `confidence_label` remain in diagnostics/session payloads for debugging and logs.
+
+The backend now exposes a unified review action model:
+
+- sentence-level comments
+- response-level comments
+- single refine endpoint that orchestrates rewrite and supplement behavior
 
 ## Query Pipeline Highlights
 
