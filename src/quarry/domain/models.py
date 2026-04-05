@@ -3,8 +3,9 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Literal
+from uuid import uuid4
 
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field
 
 
 def utc_now() -> datetime:
@@ -191,11 +192,30 @@ class StructuralIndexEntry(BaseModel):
 
 
 class ReviewComment(BaseModel):
+    comment_id: str = Field(default_factory=lambda: str(uuid4()))
+    text_selection: str = ""
+    char_start: int = 0
+    char_end: int = 0
+    comment_text: str = Field(
+        min_length=1,
+        validation_alias=AliasChoices("comment_text", "comment"),
+        serialization_alias="comment_text",
+    )
+    resolved: bool = False
     sentence_index: int | None = None
     sentence_type: SentenceType | None = None
     sentence_text: str | None = None
-    comment: str
     created_at: datetime = Field(default_factory=utc_now)
+
+
+class SelectionCommentEdit(BaseModel):
+    comment_id: str
+    comment_text: str
+    text_selection: str
+    char_start: int
+    char_end: int
+    created_at: datetime
+    resolved: bool = False
 
 
 class CitationReplacement(BaseModel):
@@ -211,6 +231,7 @@ class ClaimDisagreement(BaseModel):
 
 class FeedbackState(BaseModel):
     comments: list[ReviewComment] = Field(default_factory=list)
+    resolved_comments: list[SelectionCommentEdit] = Field(default_factory=list)
     citation_replacements: list[CitationReplacement] = Field(default_factory=list)
 
 
@@ -301,8 +322,7 @@ class GenerationRequest(BaseModel):
     mismatch_citation_ids: list[int] = Field(default_factory=list)
     disagreement_notes: list[str] = Field(default_factory=list)
     disagreement_contexts: list[str] = Field(default_factory=list)
-    sentence_comments: list[ReviewComment] = Field(default_factory=list)
-    response_comments: list[str] = Field(default_factory=list)
+    selection_comments: list[ReviewComment] = Field(default_factory=list)
     failed_sentence_text: str | None = None
     failed_sentence_comment: str | None = None
     failed_regeneration_response: str | None = None
@@ -320,8 +340,14 @@ class QueryRequest(BaseModel):
 
 
 class ReviewCommentRequest(BaseModel):
-    sentence_index: int | None = None
-    comment: str = Field(min_length=1)
+    text_selection: str = Field(min_length=1)
+    char_start: int = Field(ge=0)
+    char_end: int = Field(gt=0)
+    comment_text: str = Field(min_length=1)
+
+
+class ReviewCommentUpdateRequest(BaseModel):
+    comment_text: str = Field(min_length=1)
 
 
 class CitationReplacementRequest(BaseModel):

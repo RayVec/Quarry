@@ -546,16 +546,27 @@ export default function App() {
     }
   }
 
-  async function handleSaveSentenceComment(entryId: string, sessionId: string, sentenceIndex: number, note: string) {
-    const response = await api.addComment(sessionId, note, sentenceIndex);
+  async function handleSaveSelectionComment(
+    entryId: string,
+    sessionId: string,
+    payload: {
+      text_selection: string;
+      char_start: number;
+      char_end: number;
+      comment_text: string;
+    },
+  ) {
+    const response = await api.addComment(sessionId, payload);
     startTransition(() => replaceAssistantEntrySession(entryId, response.session));
   }
 
-  async function handleSaveResponseComment(note: string) {
-    if (!interactiveAssistant || !note.trim()) {
-      return;
-    }
-    const response = await api.addComment(interactiveAssistant.session.session_id, note.trim());
+  async function handleUpdateSelectionComment(entryId: string, sessionId: string, commentId: string, commentText: string) {
+    const response = await api.updateComment(sessionId, commentId, commentText);
+    startTransition(() => replaceAssistantEntrySession(entryId, response.session));
+  }
+
+  async function handleDeleteSelectionComment(entryId: string, sessionId: string, commentId: string) {
+    const response = await api.deleteComment(sessionId, commentId);
     startTransition(() => replaceInteractiveSession(response.session));
   }
 
@@ -679,10 +690,15 @@ export default function App() {
                           readOnly,
                         });
                       }}
-                      onSaveComment={(session, sentenceIndex, note) =>
-                        handleSaveSentenceComment(entry.id, session.session_id, sentenceIndex, note)
+                      onSaveComment={(session, payload) =>
+                        handleSaveSelectionComment(entry.id, session.session_id, payload)
                       }
-                      onSaveResponseComment={(_session, note) => handleSaveResponseComment(note)}
+                      onUpdateComment={(session, commentId, commentText) =>
+                        handleUpdateSelectionComment(entry.id, session.session_id, commentId, commentText)
+                      }
+                      onDeleteComment={(session, commentId) =>
+                        handleDeleteSelectionComment(entry.id, session.session_id, commentId)
+                      }
                       onRefine={handleRefine}
                       onRunClarificationSuggestion={(suggestion) => void submitQuery(suggestion, { fresh: true })}
                     />

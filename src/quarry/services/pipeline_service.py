@@ -20,6 +20,7 @@ from quarry.domain.models import (
     ReviewWarning,
     RetrievalFilters,
     ScopedRetrievalEnvelope,
+    SelectionCommentEdit,
     QueryType,
     ReviewComment,
     ReviewCommentRequest,
@@ -418,19 +419,42 @@ class PipelineService:
         session = self.session_store.get(session_id)
         sentence_type = None
         sentence_text = None
-        if request.sentence_index is not None:
-            sentence = session.parsed_sentences[request.sentence_index]
-            sentence.disagreement_flagged = True
-            sentence_type = sentence.sentence_type
-            sentence_text = sentence.sentence_text
+        sentence_index = None
+        for sentence in session.parsed_sentences:
+            start = request.char_start
+            end = request.char_end
+            if start <= end and request.text_selection in sentence.sentence_text:
+                sentence.disagreement_flagged = True
+                sentence_type = sentence.sentence_type
+                sentence_text = sentence.sentence_text
+                sentence_index = sentence.sentence_index
+                break
         session.feedback.comments.append(
             ReviewComment(
-                sentence_index=request.sentence_index,
+                comment_id=str(uuid4()),
+                text_selection=request.text_selection.strip(),
+                char_start=request.char_start,
+                char_end=request.char_end,
+                comment_text=request.comment_text.strip(),
+                sentence_index=sentence_index,
                 sentence_type=sentence_type,
                 sentence_text=sentence_text,
-                comment=request.comment.strip(),
             )
         )
+        return self.session_store.save(session)
+
+    def update_review_comment(self, session_id: str, comment_id: str, comment_text: str) -> SessionState:
+        session = self.session_store.get(session_id)
+        for comment in session.feedback.comments:
+            if comment.comment_id == comment_id:
+                comment.comment_text = comment_text.strip()
+                break
+        return self.session_store.save(session)
+
+    def delete_review_comment(self, session_id: str, comment_id: str) -> SessionState:
+        session = self.session_store.get(session_id)
+        session.feedback.comments = [comment for comment in session.feedback.comments if comment.comment_id != comment_id]
+        session.feedback.resolved_comments = [comment for comment in session.feedback.resolved_comments if comment.comment_id != comment_id]
         return self.session_store.save(session)
 
     async def scoped_retrieval(self, session_id: str, sentence_index: int, citation_id: int) -> ScopedRetrievalEnvelope:
@@ -545,11 +569,10 @@ class PipelineService:
         session = self.session_store.get(session_id)
         prior_response = session.generated_response
         working_citations = list(session.citation_index)
-        sentence_comments = [comment for comment in session.feedback.comments if comment.sentence_index is not None]
-        response_comments = [comment.comment for comment in session.feedback.comments if comment.sentence_index is None]
+        selection_comments = [comment for comment in session.feedback.comments if not comment.resolved]
         replacement_sentence_comments = {
-            comment.sentence_index: comment.comment
-            for comment in sentence_comments
+            comment.sentence_index: comment.comment_text
+            for comment in selection_comments
             if comment.sentence_index is not None
         }
         logger.info(
@@ -557,28 +580,25 @@ class PipelineService:
             extra={
                 "session_id": session_id,
                 "comment_count": len(session.feedback.comments),
-                "sentence_comment_count": len(sentence_comments),
+                "sentence_comment_count": len(selection_comments),
             },
         )
         try:
             step2_rewrites = 0
             step2_rewrites = 0
-            if replacement_sentence_comments:
-                comment_lines = [f"Sentence {idx}: {note}" for idx, note in sorted(replacement_sentence_comments.items())]
+            if selection_comments or replacement_sentence_comments:
+                comment_lines = [
+                    f'Selected "{comment.text_selection}": {comment.comment_text}'
+                    for comment in selection_comments
+                ]
                 refine_request = GenerationRequest(
                     original_query=session.original_query,
                     facets=session.facets,
                     citation_index=self._trim_citations_to_budget(working_citations),
                     mode="refinement",
                     existing_response=render_parsed_sentences(session.parsed_sentences),
-                    sentence_comments=[
-                        ReviewComment(
-                            sentence_index=idx,
-                            sentence_type=session.parsed_sentences[idx].sentence_type if idx < len(session.parsed_sentences) else None,
-                            sentence_text=session.parsed_sentences[idx].sentence_text if idx < len(session.parsed_sentences) else None,
-                            comment=note,
-                        )
-                        for idx, note in sorted(replacement_sentence_comments.items())
+                    selection_comments=[
+                        comment.model_copy(deep=True) for comment in selection_comments
                     ],
                     disagreement_notes=comment_lines,
                     disagreement_contexts=[],
@@ -598,44 +618,6 @@ class PipelineService:
                         step2_rewrites = len(changed_indices)
 
             step3_additions = 0
-            if response_comments:
-                passages, diagnostics = await self.hybrid_retriever.retrieve(
-                    original_query=session.original_query,
-                    facets=response_comments,
-                )
-                session.retrieval_diagnostics.extend(diagnostics)
-                working_citations = self._append_unique_citations(
-                    working_citations,
-                    build_citation_index(
-                        passages,
-                        starting_id=max((entry.citation_id for entry in working_citations), default=0) + 1,
-                        ambiguity_gap_threshold=self.ambiguity_gap_threshold,
-                    ),
-                )
-                supplement_request = GenerationRequest(
-                    original_query=session.original_query,
-                    facets=session.facets,
-                    citation_index=self._trim_citations_to_budget(working_citations),
-                    mode="supplement",
-                    existing_response=render_parsed_sentences(session.parsed_sentences),
-                    response_comments=response_comments,
-                    selected_facets=response_comments,
-                )
-                supplemental_raw = await self._generate_with_retry(supplement_request)
-                if supplemental_raw is not None:
-                    supplemental_parsed = parse_generated_response(supplemental_raw)
-                    offset = len(session.parsed_sentences)
-                    for sentence in supplemental_parsed:
-                        sentence.sentence_index += offset
-                    session.parsed_sentences.extend(supplemental_parsed)
-                    changed_indices = set(range(offset, len(session.parsed_sentences)))
-                    if changed_indices:
-                        session.parsed_sentences, working_citations = await self._verify_and_reindex_changed_sentences(
-                            session.parsed_sentences,
-                            working_citations,
-                            changed_indices,
-                        )
-                        step3_additions = len(changed_indices)
         except Exception:
             session.generated_response = prior_response
             session.ui_messages.append(
@@ -652,6 +634,7 @@ class PipelineService:
             return self.session_store.save(session)
 
         session.parsed_sentences, removed_sentence_count = self._apply_lingering_grounding_policy(session.parsed_sentences)
+        self._reanchor_selection_comments(session)
         self._annotate_match_quality(session.parsed_sentences)
         session.generated_response = render_parsed_sentences(session.parsed_sentences)
         session.citation_index = working_citations
@@ -662,8 +645,6 @@ class PipelineService:
         summary_parts: list[str] = []
         if step2_rewrites:
             summary_parts.append(f"rewrote {step2_rewrites} sentences")
-        if step3_additions:
-            summary_parts.append(f"added {step3_additions} new sentences")
         if summary_parts:
             session.ui_messages.append(
                 UIMessage(
@@ -691,6 +672,60 @@ class PipelineService:
             },
         )
         return self.session_store.save(session)
+
+    def _reanchor_selection_comments(self, session: SessionState) -> None:
+        if not session.feedback.comments:
+            return
+        rendered_text = " ".join(sentence.sentence_text for sentence in session.parsed_sentences)
+        remaining: list[ReviewComment] = []
+        for comment in session.feedback.comments:
+            if comment.resolved:
+                session.feedback.resolved_comments.append(
+                    SelectionCommentEdit(
+                        comment_id=comment.comment_id,
+                        comment_text=comment.comment_text,
+                        text_selection=comment.text_selection,
+                        char_start=comment.char_start,
+                        char_end=comment.char_end,
+                        created_at=comment.created_at,
+                        resolved=True,
+                    )
+                )
+                continue
+            selection = comment.text_selection.strip()
+            if not selection:
+                comment.resolved = True
+                session.feedback.resolved_comments.append(
+                    SelectionCommentEdit(
+                        comment_id=comment.comment_id,
+                        comment_text=comment.comment_text,
+                        text_selection=comment.text_selection,
+                        char_start=comment.char_start,
+                        char_end=comment.char_end,
+                        created_at=comment.created_at,
+                        resolved=True,
+                    )
+                )
+                continue
+            position = rendered_text.find(selection)
+            if position < 0:
+                comment.resolved = True
+                session.feedback.resolved_comments.append(
+                    SelectionCommentEdit(
+                        comment_id=comment.comment_id,
+                        comment_text=comment.comment_text,
+                        text_selection=comment.text_selection,
+                        char_start=comment.char_start,
+                        char_end=comment.char_end,
+                        created_at=comment.created_at,
+                        resolved=True,
+                    )
+                )
+                continue
+            comment.char_start = position
+            comment.char_end = position + len(selection)
+            remaining.append(comment)
+        session.feedback.comments = remaining
 
     async def _process_response(
         self,
@@ -1078,7 +1113,7 @@ class PipelineService:
     ) -> None:
         passage_tokens = sum(len(citation.text.split()) for citation in request.citation_index)
         response_tokens = sum(len(sentence.sentence_text.split()) for sentence in parsed_sentences)
-        comment_tokens = sum(len(comment.comment.split()) for comment in request.sentence_comments)
+        comment_tokens = sum(len(comment.comment_text.split()) + len(comment.text_selection.split()) for comment in request.selection_comments)
         total_estimate = passage_tokens + response_tokens + comment_tokens
         threshold = int(self.refinement_token_budget * self.REFINE_PROMPT_WINDOW_RATIO)
         if total_estimate > threshold:
@@ -1088,7 +1123,7 @@ class PipelineService:
                     "estimated_tokens": total_estimate,
                     "threshold": threshold,
                     "sentence_count": len(parsed_sentences),
-                    "comment_count": len(request.sentence_comments),
+                    "comment_count": len(request.selection_comments),
                     "console_visible": False,
                 },
             )

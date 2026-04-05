@@ -253,16 +253,12 @@ def _format_reviewer_feedback(request: GenerationRequest) -> str:
         if context.strip():
             feedback_lines.append(f"- Contradicting evidence: {context.strip()}")
 
-    for comment in request.sentence_comments:
-        label = f"Sentence {comment.sentence_index}" if comment.sentence_index is not None else "Sentence (unknown)"
-        if comment.sentence_type is not None:
-            label = f"{label} [{comment.sentence_type.value.upper()}]"
-        if comment.comment.strip():
-            feedback_lines.append(f"- {label}: {comment.comment.strip()}")
-
-    for comment in request.response_comments:
-        if comment.strip():
-            feedback_lines.append(f"- Response-level comment: {comment.strip()}")
+    for index, comment in enumerate(request.selection_comments, start=1):
+        selection = comment.text_selection.strip()
+        note = comment.comment_text.strip()
+        if selection and note and not comment.resolved:
+            feedback_lines.append(f'{index}. Selected: "{selection}"')
+            feedback_lines.append(f"   Comment: {note}")
 
     return "\n".join(feedback_lines)
 
@@ -281,17 +277,13 @@ def _format_mode_instruction(request: GenerationRequest) -> str:
         )
 
     if request.mode == "refinement":
-        sentence_comment_instruction = ""
-        if request.sentence_comments:
-            sentence_comment_instruction = (
-                "\nTreat sentence-level reviewer comments as required edits.\n"
-                "You may adjust surrounding sentences only when needed to keep the answer consistent.\n"
-                "Preserve unaffected sentences and avoid unnecessary rewrites."
-            )
-        response_comment_instruction = ""
-        if request.response_comments:
-            response_comment_instruction = (
-                "\nResponse-level comments indicate missing topics. Add grounded coverage for those topics."
+        selection_comment_instruction = ""
+        if request.selection_comments:
+            selection_comment_instruction = (
+                "\nThe reviewer has highlighted sections of the response and left comments.\n"
+                "Treat each selection comment as a required edit.\n"
+                "Use the selected text span directly to locate what to revise.\n"
+                "You may adjust surrounding wording only when needed for consistency."
             )
         return (
             "## Additional Instruction\n"
@@ -301,8 +293,7 @@ def _format_mode_instruction(request: GenerationRequest) -> str:
             "evidence and any contradicting evidence. If evidence is insufficient\n"
             "after removing flagged passages, say so rather than citing unsupported\n"
             "sources."
-            f"{sentence_comment_instruction}"
-            f"{response_comment_instruction}"
+            f"{selection_comment_instruction}"
         )
 
     if request.mode == "regeneration" and request.failed_sentence_text:

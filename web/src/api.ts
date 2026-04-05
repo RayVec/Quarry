@@ -35,10 +35,29 @@ export const api = {
   getSession(sessionId: string) {
     return request<SessionEnvelope>(`/sessions/${sessionId}`);
   },
-  addComment(sessionId: string, comment: string, sentenceIndex?: number) {
+  addComment(
+    sessionId: string,
+    payload: {
+      text_selection: string;
+      char_start: number;
+      char_end: number;
+      comment_text: string;
+    },
+  ) {
     return request<SessionEnvelope>(`/sessions/${sessionId}/comments`, {
       method: "POST",
-      body: JSON.stringify({ comment, sentence_index: sentenceIndex }),
+      body: JSON.stringify(payload),
+    });
+  },
+  updateComment(sessionId: string, commentId: string, commentText: string) {
+    return request<SessionEnvelope>(`/sessions/${sessionId}/comments/${commentId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ comment_text: commentText }),
+    });
+  },
+  deleteComment(sessionId: string, commentId: string) {
+    return request<SessionEnvelope>(`/sessions/${sessionId}/comments/${commentId}`, {
+      method: "DELETE",
     });
   },
   scopedRetrieval(sessionId: string, sentenceIndex: number, citationId: number) {

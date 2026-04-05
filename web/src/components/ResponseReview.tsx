@@ -1,4 +1,4 @@
-import { startTransition, useMemo, useState } from "react";
+import { startTransition, useMemo, useRef, useState } from "react";
 import { MessageSquare } from "lucide-react";
 import type { ParsedSentence, Reference, SessionState } from "../types";
 import { buildDisplayCitationMap } from "../utils/citationDisplay";
@@ -7,7 +7,14 @@ interface ResponseReviewProps {
   session: SessionState;
   readOnly: boolean;
   onOpenCitation: (sentence: ParsedSentence, citationId: number, referenceQuote: string) => void;
-  onSaveComment: (sentenceIndex: number, note: string) => Promise<void>;
+  onSaveComment: (selection: {
+    text_selection: string;
+    char_start: number;
+    char_end: number;
+    comment_text: string;
+  }) => Promise<void>;
+  onUpdateComment: (commentId: string, commentText: string) => Promise<void>;
+  onDeleteComment: (commentId: string) => Promise<void>;
 }
 
 function sentenceStatusNote(sentence: ParsedSentence) {
@@ -50,9 +57,17 @@ export function ResponseReview({
   readOnly,
   onOpenCitation,
   onSaveComment,
+  onUpdateComment,
+  onDeleteComment,
 }: ResponseReviewProps) {
-  const [editingSentenceIndex, setEditingSentenceIndex] = useState<number | null>(null);
+  const [selectionDraft, setSelectionDraft] = useState<{
+    text: string;
+    start: number;
+    end: number;
+  } | null>(null);
   const [note, setNote] = useState("");
+  const [activeCommentId, setActiveCommentId] = useState<string | null>(null);
+  const contentRef = useRef<HTMLDivElement | null>(null);
   const displayCitationMap = useMemo(() => buildDisplayCitationMap(session), [session]);
   const visibleSentences = useMemo(
     () => (session.parsed_sentences ?? []).filter((sentence) => sentence.sentence_text.trim().length > 0),
@@ -67,10 +82,31 @@ export function ResponseReview({
     }
     return [...grouped.entries()].sort((a, b) => a[0] - b[0]);
   }, [visibleSentences]);
+  const flatText = useMemo(
+    () => visibleSentences.map((sentence) => sentence.sentence_text).join(" "),
+    [visibleSentences],
+  );
+  const activeComment = useMemo(
+    () => session.feedback.comments.find((comment) => comment.comment_id === activeCommentId) ?? null,
+    [session.feedback.comments, activeCommentId],
+  );
+
+  function handleMouseUp() {
+    if (readOnly) return;
+    const selected = window.getSelection();
+    if (!selected || selected.isCollapsed) return;
+    const selectedText = selected.toString().trim();
+    if (!selectedText) return;
+    const start = flatText.indexOf(selectedText);
+    if (start < 0) return;
+    setSelectionDraft({ text: selectedText, start, end: start + selectedText.length });
+    setNote("");
+    setActiveCommentId(null);
+  }
 
   return (
     <section className="response-review">
-      <div className="response-reading-flow">
+      <div className="response-reading-flow" onMouseUp={handleMouseUp} ref={contentRef}>
         {!paragraphs.length ? (
           <div className="response-empty-state">
             <span className="tiny-label">No verified answer to show</span>
@@ -111,10 +147,17 @@ export function ResponseReview({
                         data-testid={`disagree-${sentence.sentence_index}`}
                         data-tooltip={sentenceRailTooltip(sentence) || "Make comments"}
                         onClick={() => {
-                          setEditingSentenceIndex((current) =>
-                            current === sentence.sentence_index ? null : sentence.sentence_index,
-                          );
-                          setNote("");
+                          const fallbackText = sentence.sentence_text.trim();
+                          const start = flatText.indexOf(fallbackText);
+                          if (start >= 0) {
+                            setSelectionDraft({
+                              text: fallbackText,
+                              start,
+                              end: start + fallbackText.length,
+                            });
+                            setNote("");
+                            setActiveCommentId(null);
+                          }
                         }}
                       >
                         <span className="sr-only">Make comments</span>
@@ -129,46 +172,124 @@ export function ResponseReview({
                     </p>
                   ) : null}
 
-                  {commentable && editingSentenceIndex === sentence.sentence_index ? (
-                    <div className="inline-note-editor">
-                      <textarea
-                        data-testid="disagreement-note"
-                        value={note}
-                        onChange={(event) => setNote(event.target.value)}
-                        placeholder="Leave your comments on this sentence"
-                      />
-                      <div className="inline-note-actions">
-                        <button
-                          className="ghost-button"
-                          onClick={() => {
-                            setEditingSentenceIndex(null);
-                            setNote("");
-                          }}
-                        >
-                          Cancel
-                        </button>
-                        <button
-                          className="primary-button subtle"
-                          data-testid="save-disagreement"
-                          disabled={!note.trim()}
-                          onClick={async () => {
-                            await onSaveComment(sentence.sentence_index, note.trim());
-                            startTransition(() => {
-                              setEditingSentenceIndex(null);
-                              setNote("");
-                            });
-                          }}
-                        >
-                          Save note
-                        </button>
-                      </div>
-                    </div>
-                  ) : null}
                 </div>
               );
             })}
           </div>
         ))}
+
+        {selectionDraft ? (
+          <div className="inline-note-editor selection-comment-editor" data-testid="selection-comment-editor">
+            <span className="tiny-label">Selected text</span>
+            <p className="selection-preview">"{selectionDraft.text}"</p>
+            <textarea
+              data-testid="selection-comment-input"
+              value={note}
+              onChange={(event) => setNote(event.target.value)}
+              placeholder="Leave your comment on this selection"
+            />
+            <div className="inline-note-actions">
+              <button
+                className="ghost-button"
+                onClick={() => {
+                  setSelectionDraft(null);
+                  setNote("");
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                className="primary-button subtle"
+                data-testid="save-selection-comment"
+                disabled={!note.trim()}
+                onClick={async () => {
+                  await onSaveComment({
+                    text_selection: selectionDraft.text,
+                    char_start: selectionDraft.start,
+                    char_end: selectionDraft.end,
+                    comment_text: note.trim(),
+                  });
+                  startTransition(() => {
+                    setSelectionDraft(null);
+                    setNote("");
+                  });
+                }}
+              >
+                Save comment
+              </button>
+            </div>
+          </div>
+        ) : null}
+
+        {activeComment ? (
+          <div className="inline-note-editor selection-comment-editor" data-testid="selection-comment-active-editor">
+            <span className="tiny-label">Selected text</span>
+            <p className="selection-preview">"{activeComment.text_selection}"</p>
+            <textarea
+              data-testid="selection-comment-edit-input"
+              value={note || activeComment.comment_text}
+              onChange={(event) => setNote(event.target.value)}
+              placeholder="Edit comment"
+            />
+            <div className="inline-note-actions">
+              <button
+                className="ghost-button"
+                onClick={() => {
+                  setActiveCommentId(null);
+                  setNote("");
+                }}
+              >
+                Close
+              </button>
+              <button
+                className="ghost-button"
+                data-testid="delete-selection-comment"
+                onClick={async () => {
+                  await onDeleteComment(activeComment.comment_id);
+                  startTransition(() => {
+                    setActiveCommentId(null);
+                    setNote("");
+                  });
+                }}
+              >
+                Delete
+              </button>
+              <button
+                className="primary-button subtle"
+                data-testid="update-selection-comment"
+                disabled={!(note || activeComment.comment_text).trim()}
+                onClick={async () => {
+                  await onUpdateComment(activeComment.comment_id, (note || activeComment.comment_text).trim());
+                  startTransition(() => {
+                    setActiveCommentId(null);
+                    setNote("");
+                  });
+                }}
+              >
+                Save
+              </button>
+            </div>
+          </div>
+        ) : null}
+
+        {(session.feedback.comments ?? []).length ? (
+          <div className="selection-highlight-list" data-testid="selection-highlight-list">
+            {(session.feedback.comments ?? []).map((comment) => (
+              <button
+                key={comment.comment_id}
+                className="selection-highlight-chip"
+                data-testid={`selection-highlight-${comment.comment_id}`}
+                onClick={() => {
+                  setActiveCommentId(comment.comment_id);
+                  setNote(comment.comment_text);
+                  setSelectionDraft(null);
+                }}
+              >
+                <span>"{comment.text_selection}"</span>
+              </button>
+            ))}
+          </div>
+        ) : null}
       </div>
     </section>
   );

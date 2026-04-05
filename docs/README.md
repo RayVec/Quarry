@@ -232,11 +232,12 @@ Frontend citation quality display now consumes a single sentence-level field:
 
 Raw `status` and `confidence_label` remain in diagnostics/session payloads for debugging and logs.
 
-The backend now exposes a unified review action model:
+The backend now exposes a unified review action model built around text selections:
 
-- sentence-level comments
-- response-level comments
-- single refine endpoint that orchestrates rewrite and supplement behavior
+- selection comments with `text_selection`, `char_start`, `char_end`, and `comment_text`
+- citation replacement/undo actions from the citation drawer
+- single refine endpoint that applies selection comments and citation replacement decisions
+- resolved comment tracking when a prior selection no longer anchors in the refined response
 
 ## Query Pipeline Highlights
 

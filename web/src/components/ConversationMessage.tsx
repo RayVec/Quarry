@@ -10,8 +10,17 @@ interface ConversationMessageProps {
   session: SessionState;
   interactive: boolean;
   onOpenCitation: (session: SessionState, sentence: ParsedSentence, citationId: number, referenceQuote: string, readOnly: boolean) => void;
-  onSaveComment: (session: SessionState, sentenceIndex: number, note: string) => Promise<void>;
-  onSaveResponseComment: (session: SessionState, note: string) => Promise<void>;
+  onSaveComment: (
+    session: SessionState,
+    payload: {
+      text_selection: string;
+      char_start: number;
+      char_end: number;
+      comment_text: string;
+    },
+  ) => Promise<void>;
+  onUpdateComment: (session: SessionState, commentId: string, commentText: string) => Promise<void>;
+  onDeleteComment: (session: SessionState, commentId: string) => Promise<void>;
   onRefine: () => Promise<void>;
   onRunClarificationSuggestion: (query: string) => void;
 }
@@ -55,7 +64,8 @@ export function ConversationMessage({
   interactive,
   onOpenCitation,
   onSaveComment,
-  onSaveResponseComment,
+  onUpdateComment,
+  onDeleteComment,
   onRefine,
   onRunClarificationSuggestion,
 }: ConversationMessageProps) {
@@ -96,7 +106,9 @@ export function ConversationMessage({
           onOpenCitation={(sentence, citationId, referenceQuote) =>
             onOpenCitation(session, sentence, citationId, referenceQuote, readOnly)
           }
-          onSaveComment={(sentenceIndex, note) => onSaveComment(session, sentenceIndex, note)}
+          onSaveComment={(payload) => onSaveComment(session, payload)}
+          onUpdateComment={(commentId, commentText) => onUpdateComment(session, commentId, commentText)}
+          onDeleteComment={(commentId) => onDeleteComment(session, commentId)}
         />
       )}
 
@@ -104,7 +116,6 @@ export function ConversationMessage({
         <ReviewPanel
           session={session}
           interactive={interactive}
-          onSaveResponseComment={(note) => onSaveResponseComment(session, note)}
           onRefine={onRefine}
         />
       ) : null}

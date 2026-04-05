@@ -121,30 +121,31 @@ def test_generation_prompt_includes_refinement_feedback_sections() -> None:
     assert "Avoid reliance on flagged passages." in prompt
 
 
-def test_generation_prompt_includes_sentence_and_response_comments() -> None:
+def test_generation_prompt_includes_selection_comments() -> None:
     request = GenerationRequest(
         original_query="What are the main schedule risks?",
         facets=["schedule drivers"],
         citation_index=[_citation(1, "Procurement packages that were locked late repeatedly disrupted installation windows.")],
         mode="refinement",
-        sentence_comments=[
+        selection_comments=[
             ReviewComment(
+                comment_id="c1",
+                text_selection="threshold should be under five million dollars",
+                char_start=12,
+                char_end=54,
+                comment_text="This number is incorrect; use 10M not 5M.",
                 sentence_index=3,
                 sentence_type="claim",
                 sentence_text="Old sentence",
-                comment="This number is incorrect; use 10M not 5M.",
             )
         ],
-        response_comments=["Add missing coverage for shutdown planning."],
     )
 
     prompt = generation_prompt(request)
 
-    assert "Sentence 3 [CLAIM]" in prompt
+    assert 'Selected: "threshold should be under five million dollars"' in prompt
     assert "This number is incorrect; use 10M not 5M." in prompt
-    assert "Response-level comment: Add missing coverage for shutdown planning." in prompt
-    assert "Treat sentence-level reviewer comments as required edits." in prompt
-    assert "Response-level comments indicate missing topics." in prompt
+    assert "Treat each selection comment as a required edit." in prompt
 
 
 def test_generation_prompt_includes_sentence_repair_mode() -> None:

@@ -8,6 +8,7 @@ from quarry.domain.models import (
     CitationReplacementRequest,
     QueryRequest,
     ReviewCommentRequest,
+    ReviewCommentUpdateRequest,
     ScopedRetrievalEnvelope,
     SessionEnvelope,
 )
@@ -85,6 +86,33 @@ async def add_review_comment(
 ) -> SessionEnvelope:
     try:
         session = service.add_review_comment(session_id, payload)
+    except SessionNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Session not found.") from exc
+    return SessionEnvelope(session=session)
+
+
+@router.patch("/sessions/{session_id}/comments/{comment_id}", response_model=SessionEnvelope)
+async def update_review_comment(
+    session_id: str,
+    comment_id: str,
+    payload: ReviewCommentUpdateRequest,
+    service: PipelineService = Depends(get_service),
+) -> SessionEnvelope:
+    try:
+        session = service.update_review_comment(session_id, comment_id, payload.comment_text)
+    except SessionNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Session not found.") from exc
+    return SessionEnvelope(session=session)
+
+
+@router.delete("/sessions/{session_id}/comments/{comment_id}", response_model=SessionEnvelope)
+async def delete_review_comment(
+    session_id: str,
+    comment_id: str,
+    service: PipelineService = Depends(get_service),
+) -> SessionEnvelope:
+    try:
+        session = service.delete_review_comment(session_id, comment_id)
     except SessionNotFoundError as exc:
         raise HTTPException(status_code=404, detail="Session not found.") from exc
     return SessionEnvelope(session=session)

@@ -104,10 +104,24 @@ export interface FacetRetrievalDiagnostic {
 
 export interface FeedbackState {
   comments: Array<{
+    comment_id: string;
+    text_selection: string;
+    char_start: number;
+    char_end: number;
+    comment_text: string;
+    resolved: boolean;
     sentence_index?: number | null;
     sentence_type?: "claim" | "synthesis" | "structure" | null;
     sentence_text?: string | null;
-    comment: string;
+  }>;
+  resolved_comments: Array<{
+    comment_id: string;
+    text_selection: string;
+    char_start: number;
+    char_end: number;
+    comment_text: string;
+    created_at: string;
+    resolved: boolean;
   }>;
   citation_replacements: Array<{ citation_id: number; replacement_chunk_id: string }>;
 }

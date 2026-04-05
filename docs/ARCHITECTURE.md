@@ -470,6 +470,8 @@ Current behavior:
 - citation badges shown to users are renumbered contiguously (`[1]..[N]`) for readability; backend/internal citation IDs remain unchanged for review mutations
 - removed-sentence warnings are surfaced to the reviewer in the message and review panel
 - older assistant messages remain visible but read-only
+- comment capture uses text selections (character ranges) instead of sentence-index or response-level freeform comments
+- refine input is selection-driven; response-level supplement comments are no longer a separate path
 
 ### 10.2.1 Paragraph layout and match quality
 
@@ -496,6 +498,23 @@ The left per-sentence confidence rail has been removed from main reading flow. C
 Raw verification fields (`status`, `confidence_label`, `confidence_score`) remain in the session payload for diagnostics and logging; frontend reading flow relies on `match_quality`.
 
 The diagnostics drawer close button uses the same icon-only pattern and `drawer-close-trigger` styling as the citation drawer.
+
+### 10.2.2 Selection comment lifecycle
+
+Review comments are persisted as selection anchors in `feedback.comments`:
+
+- `comment_id`
+- `text_selection`
+- `char_start` / `char_end`
+- `comment_text`
+- `resolved`
+
+During refinement, the pipeline attempts to re-anchor each selection in the new response text:
+
+- if the selection can be located, the comment remains active with updated offsets
+- if the selection cannot be located, the comment moves to `feedback.resolved_comments`
+
+Frontend currently exposes selection comment creation/edit/delete in the response review surface and summarizes active/resolved counts in the review panel.
 
 ### 10.3 UI modes
 

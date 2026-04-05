@@ -205,8 +205,12 @@ export function CitationDialog({
   async function handleMismatch() {
     const response = await api.addComment(
       session.session_id,
-      mismatchNote || "Citation does not support this sentence.",
-      sentenceIndex,
+      {
+        text_selection: referenceQuote || sourceSentence?.sentence_text || "",
+        char_start: 0,
+        char_end: Math.max((referenceQuote || sourceSentence?.sentence_text || "").length, 1),
+        comment_text: mismatchNote || "Citation does not support this sentence.",
+      },
     );
     startTransition(() => {
       onSessionUpdate(response.session);
