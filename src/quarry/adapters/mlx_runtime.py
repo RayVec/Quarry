@@ -376,30 +376,15 @@ class MLXStructuredDecompositionClient(DecompositionClient):
             repaired = await self.backend.complete(_json_repair_prompt(prompt, raw), max_new_tokens=max_new_tokens, operation="json_repair")
             return parse_json_response(repaired)
 
-    async def classify_query(self, query: str) -> str:
-        try:
-            prompt = decomposition_classification_prompt(query)
-            raw = await self.backend.complete(prompt, max_new_tokens=96, operation="query_classification")
-            try:
-                payload = parse_json_response(raw)
-            except Exception:
-                logger.warning(
-                    "mlx classification json parse failed; attempting repair",
-                    extra={"raw_response": raw, "console_visible": False},
-                )
-                repaired = await self.backend.complete(_json_repair_prompt(prompt, raw), max_new_tokens=96, operation="query_classification_repair")
-                payload = parse_json_response(repaired)
-            return str(payload["query_type"])
-        except Exception:
-            if self.fallback is None:
-                raise
-            logger.warning("mlx decomposition classification fell back to heuristic")
-            return await self.fallback.classify_query(query)
-
     async def decompose_query(self, query: str, max_facets: int) -> list[str]:
         try:
             prompt = decomposition_prompt(query, max_facets)
-            raw = await self.backend.complete(prompt, max_new_tokens=256, operation="query_decomposition")
+            raw = await self.backend.complete(
+                prompt,
+                max_new_tokens=256,
+                operation="query_decomposition",
+                enable_thinking=False,
+            )
             try:
                 payload = parse_json_response(raw)
             except Exception:
@@ -407,7 +392,12 @@ class MLXStructuredDecompositionClient(DecompositionClient):
                     "mlx decomposition json parse failed; attempting repair",
                     extra={"raw_response": raw, "console_visible": False},
                 )
-                repaired = await self.backend.complete(_json_repair_prompt(prompt, raw), max_new_tokens=256, operation="query_decomposition_repair")
+                repaired = await self.backend.complete(
+                    _json_repair_prompt(prompt, raw),
+                    max_new_tokens=256,
+                    operation="query_decomposition_repair",
+                    enable_thinking=False,
+                )
                 payload = parse_json_response(repaired)
             facets = [str(item) for item in payload.get("facets", []) if str(item).strip()]
             return facets[:max_facets] or [query]

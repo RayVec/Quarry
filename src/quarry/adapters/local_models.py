@@ -4,6 +4,7 @@ import asyncio
 from dataclasses import dataclass
 import json
 from pathlib import Path
+import threading
 from typing import Sequence
 
 import numpy as np
@@ -107,6 +108,8 @@ class LocalTextCompletionBackend:
         self._tokenizer = None
         self._model = None
         self._device = None
+        self._load_lock = threading.Lock()
+        self._inference_lock = threading.Lock()
 
     def _resolve_dtype(self, torch_module):
         if self.dtype == "auto":
@@ -116,29 +119,32 @@ class LocalTextCompletionBackend:
     def _load(self) -> None:
         if self._load_attempted:
             return
-        self._load_attempted = True
-        try:
-            import torch
-            from transformers import AutoModelForCausalLM, AutoTokenizer
+        with self._load_lock:
+            if self._load_attempted:
+                return
+            self._load_attempted = True
+            try:
+                import torch
+                from transformers import AutoModelForCausalLM, AutoTokenizer
 
-            self._device = resolve_torch_device(self.device)
-            tokenizer = AutoTokenizer.from_pretrained(self.model_name)
-            model = AutoModelForCausalLM.from_pretrained(
-                self.model_name,
-                torch_dtype=self._resolve_dtype(torch),
-                device_map="auto" if self._device != "cpu" else None,
-            )
-            if self._device == "cpu":
-                model.to(torch.device(self._device))
-            if tokenizer.pad_token_id is None:
-                tokenizer.pad_token_id = tokenizer.eos_token_id
-            model.eval()
-            self._tokenizer = tokenizer
-            self._model = model
-        except Exception as exc:
-            logger.warning("local text model unavailable", extra={"error": str(exc), "model": self.model_name})
-            self._tokenizer = None
-            self._model = None
+                self._device = resolve_torch_device(self.device)
+                tokenizer = AutoTokenizer.from_pretrained(self.model_name)
+                model = AutoModelForCausalLM.from_pretrained(
+                    self.model_name,
+                    torch_dtype=self._resolve_dtype(torch),
+                    device_map="auto" if self._device != "cpu" else None,
+                )
+                if self._device == "cpu":
+                    model.to(torch.device(self._device))
+                if tokenizer.pad_token_id is None:
+                    tokenizer.pad_token_id = tokenizer.eos_token_id
+                model.eval()
+                self._tokenizer = tokenizer
+                self._model = model
+            except Exception as exc:
+                logger.warning("local text model unavailable", extra={"error": str(exc), "model": self.model_name})
+                self._tokenizer = None
+                self._model = None
 
     def is_ready(self) -> bool:
         self._load()
@@ -163,22 +169,23 @@ class LocalTextCompletionBackend:
         assert self._tokenizer is not None
         assert self._model is not None
 
-        rendered_prompt = self._render_prompt(prompt)
-        encoded = self._tokenizer(rendered_prompt, return_tensors="pt")
-        device = torch.device(self._device or resolve_torch_device(self.device))
-        encoded = {key: value.to(device) for key, value in encoded.items()}
-        with torch.no_grad():
-            output = self._model.generate(
-                **encoded,
-                max_new_tokens=max_new_tokens,
-                do_sample=temperature > 0,
-                temperature=max(temperature, 1e-5),
-                pad_token_id=self._tokenizer.pad_token_id,
-                eos_token_id=self._tokenizer.eos_token_id,
-            )
-        prompt_tokens = encoded["input_ids"].shape[1]
-        new_tokens = output[:, prompt_tokens:]
-        return self._tokenizer.batch_decode(new_tokens, skip_special_tokens=True)[0].strip()
+        with self._inference_lock:
+            rendered_prompt = self._render_prompt(prompt)
+            encoded = self._tokenizer(rendered_prompt, return_tensors="pt")
+            device = torch.device(self._device or resolve_torch_device(self.device))
+            encoded = {key: value.to(device) for key, value in encoded.items()}
+            with torch.no_grad():
+                output = self._model.generate(
+                    **encoded,
+                    max_new_tokens=max_new_tokens,
+                    do_sample=temperature > 0,
+                    temperature=max(temperature, 1e-5),
+                    pad_token_id=self._tokenizer.pad_token_id,
+                    eos_token_id=self._tokenizer.eos_token_id,
+                )
+            prompt_tokens = encoded["input_ids"].shape[1]
+            new_tokens = output[:, prompt_tokens:]
+            return self._tokenizer.batch_decode(new_tokens, skip_special_tokens=True)[0].strip()
 
     async def complete(
         self,
@@ -226,14 +233,6 @@ class LocalStructuredDecompositionClient(DecompositionClient):
     def __init__(self, backend: LocalTextCompletionBackend, fallback: DecompositionClient | None = None) -> None:
         self.backend = backend
         self.fallback = fallback or HeuristicDecompositionClient()
-
-    async def classify_query(self, query: str) -> str:
-        try:
-            raw = await self.backend.complete(decomposition_classification_prompt(query), max_new_tokens=96, operation="query_classification")
-            return str(parse_json_response(raw)["query_type"])
-        except Exception:
-            logger.warning("local decomposition classification fell back to heuristic")
-            return await self.fallback.classify_query(query)
 
     async def decompose_query(self, query: str, max_facets: int) -> list[str]:
         try:
@@ -298,36 +297,42 @@ class LocalSentenceTransformerEmbeddingClient(EmbeddingClient):
         self._load_attempted = False
         self.dimensions: int | None = None
         self.active_model_name: str = model_name
+        self._load_lock = threading.Lock()
+        self._inference_lock = threading.Lock()
 
     def _load(self) -> None:
         if self._load_attempted:
             return
-        self._load_attempted = True
-        try:
-            from sentence_transformers import SentenceTransformer
+        with self._load_lock:
+            if self._load_attempted:
+                return
+            self._load_attempted = True
+            try:
+                from sentence_transformers import SentenceTransformer
 
-            kwargs: dict[str, object] = {"device": resolve_torch_device(self.device)}
-            if "nomic" in self.model_name.lower():
-                kwargs["trust_remote_code"] = True
-            self._model = SentenceTransformer(self.model_name, **kwargs)
-            self.dimensions = int(self._model.get_sentence_embedding_dimension())
-            self.active_model_name = self.model_name
-        except Exception as exc:
-            logger.warning("local embedding model unavailable", extra={"error": str(exc), "model": self.model_name})
-            self._model = None
-            self.active_model_name = getattr(self.fallback, "model", "hash-embedding-v1")
+                kwargs: dict[str, object] = {"device": resolve_torch_device(self.device)}
+                if "nomic" in self.model_name.lower():
+                    kwargs["trust_remote_code"] = True
+                self._model = SentenceTransformer(self.model_name, **kwargs)
+                self.dimensions = int(self._model.get_sentence_embedding_dimension())
+                self.active_model_name = self.model_name
+            except Exception as exc:
+                logger.warning("local embedding model unavailable", extra={"error": str(exc), "model": self.model_name})
+                self._model = None
+                self.active_model_name = getattr(self.fallback, "model", "hash-embedding-v1")
 
     def _embed_sync(self, texts: Sequence[str]) -> list[list[float]]:
         assert self._model is not None
-        vectors = self._model.encode(
-            list(texts),
-            batch_size=self.batch_size,
-            convert_to_numpy=True,
-            normalize_embeddings=True,
-            show_progress_bar=False,
-        )
-        self.dimensions = int(vectors.shape[1]) if getattr(vectors, "shape", None) else self.dimensions
-        return vectors.astype("float32").tolist()
+        with self._inference_lock:
+            vectors = self._model.encode(
+                list(texts),
+                batch_size=self.batch_size,
+                convert_to_numpy=True,
+                normalize_embeddings=True,
+                show_progress_bar=False,
+            )
+            self.dimensions = int(vectors.shape[1]) if getattr(vectors, "shape", None) else self.dimensions
+            return vectors.astype("float32").tolist()
 
     async def embed_texts(self, texts: Sequence[str]) -> list[list[float]]:
         self._load()
@@ -504,23 +509,29 @@ class LocalCrossEncoderReranker(Reranker):
         self.fallback = fallback or SimpleCrossEncoderReranker()
         self._model = None
         self._load_attempted = False
+        self._load_lock = threading.Lock()
+        self._inference_lock = threading.Lock()
 
     def _load(self) -> None:
         if self._load_attempted:
             return
-        self._load_attempted = True
-        try:
-            from sentence_transformers import CrossEncoder
+        with self._load_lock:
+            if self._load_attempted:
+                return
+            self._load_attempted = True
+            try:
+                from sentence_transformers import CrossEncoder
 
-            self._model = CrossEncoder(self.model_name, device=resolve_torch_device(self.device))
-        except Exception as exc:
-            logger.warning("local reranker unavailable", extra={"error": str(exc), "model": self.model_name})
-            self._model = None
+                self._model = CrossEncoder(self.model_name, device=resolve_torch_device(self.device))
+            except Exception as exc:
+                logger.warning("local reranker unavailable", extra={"error": str(exc), "model": self.model_name})
+                self._model = None
 
     def _predict_sync(self, pairs: Sequence[tuple[str, str]]) -> list[float]:
         assert self._model is not None
-        scores = self._model.predict(list(pairs), batch_size=self.batch_size, show_progress_bar=False)
-        return [float(score) for score in np.asarray(scores).reshape(-1)]
+        with self._inference_lock:
+            scores = self._model.predict(list(pairs), batch_size=self.batch_size, show_progress_bar=False)
+            return [float(score) for score in np.asarray(scores).reshape(-1)]
 
     async def rerank(self, query: str, candidates: Sequence[RetrievedPassage]) -> list[RetrievedPassage]:
         self._load()
@@ -559,24 +570,29 @@ class LocalMNLIClient(NLIClient):
         self._model = None
         self._device = None
         self._load_attempted = False
+        self._load_lock = threading.Lock()
+        self._inference_lock = threading.Lock()
 
     def _load(self) -> None:
         if self._load_attempted:
             return
-        self._load_attempted = True
-        try:
-            import torch
-            from transformers import AutoModelForSequenceClassification, AutoTokenizer
+        with self._load_lock:
+            if self._load_attempted:
+                return
+            self._load_attempted = True
+            try:
+                import torch
+                from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
-            self._device = resolve_torch_device(self.device)
-            self._tokenizer = AutoTokenizer.from_pretrained(self.model_name)
-            self._model = AutoModelForSequenceClassification.from_pretrained(self.model_name)
-            self._model.to(torch.device(self._device))
-            self._model.eval()
-        except Exception as exc:
-            logger.warning("local nli model unavailable", extra={"error": str(exc), "model": self.model_name})
-            self._model = None
-            self._tokenizer = None
+                self._device = resolve_torch_device(self.device)
+                self._tokenizer = AutoTokenizer.from_pretrained(self.model_name)
+                self._model = AutoModelForSequenceClassification.from_pretrained(self.model_name)
+                self._model.to(torch.device(self._device))
+                self._model.eval()
+            except Exception as exc:
+                logger.warning("local nli model unavailable", extra={"error": str(exc), "model": self.model_name})
+                self._model = None
+                self._tokenizer = None
 
     def _score_sync(self, sentence_text: str, chunk_texts: Sequence[str]) -> list[ScoredReference]:
         import torch
@@ -593,31 +609,32 @@ class LocalMNLIClient(NLIClient):
 
         scored: list[ScoredReference] = []
         device = torch.device(self._device or resolve_torch_device(self.device))
-        for start in range(0, len(chunk_texts), self.batch_size):
-            batch = list(chunk_texts[start : start + self.batch_size])
-            encoded = self._tokenizer(
-                batch,
-                [sentence_text] * len(batch),
-                padding=True,
-                truncation=True,
-                max_length=512,
-                return_tensors="pt",
-            )
-            encoded = {key: value.to(device) for key, value in encoded.items()}
-            with torch.no_grad():
-                logits = self._model(**encoded).logits
-            probabilities = torch.softmax(logits, dim=-1).cpu().numpy()
-            predicted = probabilities.argmax(axis=-1)
-            for row, predicted_idx in zip(probabilities, predicted):
-                entailment_score = float(row[entail_idx])
-                if predicted_idx == entail_idx or entailment_score >= self.ENTAILMENT_SOFT_THRESHOLD:
-                    label = ConfidenceLabel.SUPPORTED
-                elif predicted_idx == neutral_idx:
-                    label = ConfidenceLabel.PARTIALLY_SUPPORTED
-                else:
-                    label = ConfidenceLabel.NOT_SUPPORTED
-                scored.append(ScoredReference(score=entailment_score, label=label))
-        return scored
+        with self._inference_lock:
+            for start in range(0, len(chunk_texts), self.batch_size):
+                batch = list(chunk_texts[start : start + self.batch_size])
+                encoded = self._tokenizer(
+                    batch,
+                    [sentence_text] * len(batch),
+                    padding=True,
+                    truncation=True,
+                    max_length=512,
+                    return_tensors="pt",
+                )
+                encoded = {key: value.to(device) for key, value in encoded.items()}
+                with torch.no_grad():
+                    logits = self._model(**encoded).logits
+                probabilities = torch.softmax(logits, dim=-1).cpu().numpy()
+                predicted = probabilities.argmax(axis=-1)
+                for row, predicted_idx in zip(probabilities, predicted):
+                    entailment_score = float(row[entail_idx])
+                    if predicted_idx == entail_idx or entailment_score >= self.ENTAILMENT_SOFT_THRESHOLD:
+                        label = ConfidenceLabel.SUPPORTED
+                    elif predicted_idx == neutral_idx:
+                        label = ConfidenceLabel.PARTIALLY_SUPPORTED
+                    else:
+                        label = ConfidenceLabel.NOT_SUPPORTED
+                    scored.append(ScoredReference(score=entailment_score, label=label))
+            return scored
 
     async def score(self, sentence_text: str, chunk_texts: Sequence[str]) -> list[ScoredReference]:
         self._load()

@@ -145,7 +145,6 @@ class PipelineService:
         base_session.ui_messages = []
         base_session.removed_ungrounded_claim_count = 0
         base_session.response_mode = ResponseMode.RESPONSE_REVIEW
-        base_session.clarification_suggestions = []
         logger.info(
             "=== QUERY START ===",
             extra={
@@ -183,47 +182,11 @@ class PipelineService:
             extra={
                 "session_id": session_id,
                 "query_type": decomposition.query_type.value,
-                "clarification_required": decomposition.clarification_required,
                 "facets": decomposition.facets,
                 "facet_count": len(decomposition.facets),
                 "latency_ms": elapsed_ms(decomposition_start),
             },
         )
-
-        if decomposition.clarification_required:
-            base_session.response_mode = ResponseMode.CLARIFICATION_REQUIRED
-            base_session.clarification_suggestions = self._build_clarification_suggestions(request.query)
-            base_session.ui_messages.append(
-                UIMessage(
-                    level=UIMessageLevel.INFO,
-                    code="clarification_required",
-                    message="Please provide a more specific query with at least one concrete topic or metric.",
-                )
-            )
-            self._save_stage(
-                base_session,
-                status=QueryRunStatus.COMPLETED,
-                stage=QueryProgressStage.CLARIFICATION,
-                label="I need a little more detail",
-                detail="I can't search well yet because the question is still too broad or unclear.",
-            )
-            logger.info(
-                "query halted for clarification",
-                extra={
-                    "session_id": session_id,
-                    "response_mode": base_session.response_mode.value,
-                    "latency_ms": elapsed_ms(query_start),
-                },
-            )
-            logger.info(
-                "=== QUERY END ===",
-                extra={
-                    "session_id": session_id,
-                    "response_mode": base_session.response_mode.value,
-                    "latency_ms": elapsed_ms(query_start),
-                },
-            )
-            return self.session_store.save(base_session)
 
         retrieval_start = timed()
         self._save_stage(
@@ -1107,30 +1070,6 @@ class PipelineService:
                     "console_visible": False,
                 },
             )
-
-    def _build_clarification_suggestions(self, query: str) -> list[str]:
-        normalized = " ".join(query.split()).strip().rstrip("?")
-        if not normalized:
-            return [
-                "What findings do the CII reports have about schedule risk?",
-                "How does procurement planning affect project outcomes in the CII reports?",
-                "What recommendations do the CII reports make about modular construction?",
-            ]
-
-        lowered = normalized.lower()
-        token_count = len(normalized.split())
-        if token_count <= 2:
-            return [
-                f"What findings do the CII reports have about {lowered}?",
-                f"How does {lowered} affect project cost, schedule, or safety?",
-                f"What recommendations do the CII reports make about {lowered}?",
-            ]
-
-        return [
-            f"What specific outcome or metric are you asking about in {normalized}?",
-            f"What aspect of {normalized} should QUARRY focus on: cost, schedule, safety, or implementation?",
-            f"Can you rewrite {normalized} with a concrete topic, project phase, or report section?",
-        ]
 
     def _removed_unverified_sentences_message(self, removed_sentence_count: int) -> str:
         if removed_sentence_count == 1:

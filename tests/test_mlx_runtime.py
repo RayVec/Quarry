@@ -10,6 +10,7 @@ from quarry.ingest.parsers import Qwen3VLMlxParserAdapter
 class FakeBackend:
     def __init__(self, responses: list[str]) -> None:
         self.responses = list(responses)
+        self.calls: list[dict[str, object]] = []
 
     async def complete(
         self,
@@ -18,18 +19,29 @@ class FakeBackend:
         temperature: float = 0.1,
         max_new_tokens: int | None = None,
         operation: str = "completion",
+        enable_thinking: bool | None = None,
     ) -> str:
+        self.calls.append(
+            {
+                "prompt": prompt,
+                "temperature": temperature,
+                "max_new_tokens": max_new_tokens,
+                "operation": operation,
+                "enable_thinking": enable_thinking,
+            }
+        )
         return self.responses.pop(0)
 
 
 def test_mlx_decomposition_retries_invalid_json() -> None:
-    backend = FakeBackend(["not valid json", '{"query_type": "multi_hop"}'])
+    backend = FakeBackend(['{"facets": ["schedule impact", "cost impact"]}'])
     client = MLXStructuredDecompositionClient(backend)
 
-    result = asyncio.run(client.classify_query("Compare schedule and cost impacts"))
+    result = asyncio.run(client.decompose_query("Compare schedule and cost impacts", max_facets=3))
 
-    assert result == "multi_hop"
-
+    assert result == ["schedule impact", "cost impact"]
+    assert backend.calls[0]["operation"] == "query_decomposition"
+    assert backend.calls[0]["enable_thinking"] is False
 
 def test_qwen3_vl_mlx_parser_normalizes_structured_blocks(tmp_path: Path, monkeypatch) -> None:
     image_path = tmp_path / "page-1.png"

@@ -25,7 +25,7 @@ The current implementation is intentionally lightweight:
 Backend environment:
 
 ```bash
-python3 -m venv .venv
+python3.13 -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev,local]"
 ```
@@ -70,6 +70,13 @@ npm run dev -- --host 127.0.0.1 --port 5173
 Open:
 
 - `http://127.0.0.1:5173`
+
+Python/runtime note:
+
+- the current project metadata targets Python 3.13+
+- the April 6, 2026 Apple Silicon crash was initially misdiagnosed as a Python 3.13 compatibility problem
+- the corrected root cause was concurrent local torch/MPS access during multi-facet retrieval
+- current code serializes access to shared local model instances; if you still see native MPS crashes, set `runtime.local_model_device = "cpu"` as a fallback
 
 ## Configuration
 

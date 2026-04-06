@@ -48,7 +48,8 @@ def decomposition_classification_prompt(query: str) -> str:
         '- "What was the average cost overrun reported in Phase III?" → single_hop\n\n'
         f"Query: {query}"
         "\n\nRespond with JSON only:\n"
-        '{"query_type": "single_hop" | "multi_hop" | "clarification_required"}'
+        '{"query_type": "single_hop" | "multi_hop" | "clarification_required"}\n'
+        "The first character of your response must be '{' and there must be no prefix text."
     )
 
 
@@ -84,7 +85,8 @@ def decomposition_prompt(query: str, max_facets: int) -> str:
         '- "How does Advanced Work Packaging affect safety outcomes?"\n\n'
         f"Query: {query}\n\n"
         "Respond with JSON only:\n"
-        '{"facets": ["sub-query 1", "sub-query 2", ...]}'
+        '{"facets": ["sub-query 1", "sub-query 2", ...]}\n'
+        "The first character of your response must be '{' and there must be no prefix text."
     )
 
 

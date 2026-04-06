@@ -33,10 +33,6 @@ data/sources/*
 data/corpus/*
 !data/corpus/.gitkeep
 
-# Playwright / test runner output
-output/*
-!output/.gitkeep
-
 # Local config — copy config.example.toml → config.toml and fill in your values
 # Also ignore quarry.local.toml in case the old filename is still present locally
 config.toml

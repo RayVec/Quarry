@@ -59,25 +59,25 @@ Review tools remain available, but they appear contextually inside the answer ex
 
 ## 3. Repository Structure
 
-| Path | Purpose |
-| --- | --- |
-| `src/quarry/config.py` | runtime configuration and TOML/env loading |
-| `src/quarry/startup.py` | startup prep, warmup, optional corpus rebuild, server launch |
-| `src/quarry/cli.py` | operational CLI |
-| `src/quarry/api/` | FastAPI app and routes |
-| `src/quarry/domain/models.py` | shared typed models and enums |
-| `src/quarry/adapters/` | hosted, MLX, local, and heuristic runtime adapters |
-| `src/quarry/ingest/` | parsing, chunking, and indexing |
-| `src/quarry/pipeline/` | decomposition, retrieval, generation parsing, verification |
-| `src/quarry/services/` | query orchestration and session state |
-| `web/src/` | conversational review UI |
-| `tests/` | unit, integration, and E2E tests |
-| `data/sources/` | raw input documents |
-| `data/artifacts/` | generated corpus artifacts |
-| `data/model-cache/` | project-local model cache |
-| `data/logs/runtime/` | query/API/runtime logs |
-| `data/logs/corpus/` | warmup and ingest logs |
-| `data/logs/tests/` | pytest log files |
+| Path                          | Purpose                                                      |
+| ----------------------------- | ------------------------------------------------------------ |
+| `src/quarry/config.py`        | runtime configuration and TOML/env loading                   |
+| `src/quarry/startup.py`       | startup prep, warmup, optional corpus rebuild, server launch |
+| `src/quarry/cli.py`           | operational CLI                                              |
+| `src/quarry/api/`             | FastAPI app and routes                                       |
+| `src/quarry/domain/models.py` | shared typed models and enums                                |
+| `src/quarry/adapters/`        | hosted, MLX, local, and heuristic runtime adapters           |
+| `src/quarry/ingest/`          | parsing, chunking, and indexing                              |
+| `src/quarry/pipeline/`        | decomposition, retrieval, generation parsing, verification   |
+| `src/quarry/services/`        | query orchestration and session state                        |
+| `web/src/`                    | conversational review UI                                     |
+| `tests/`                      | unit, integration, and E2E tests                             |
+| `data/sources/`               | raw input documents                                          |
+| `data/artifacts/`             | generated corpus artifacts                                   |
+| `data/model-cache/`           | project-local model cache                                    |
+| `data/logs/runtime/`          | query/API/runtime logs                                       |
+| `data/logs/corpus/`           | warmup and ingest logs                                       |
+| `data/logs/tests/`            | pytest log files                                             |
 
 ## 4. Runtime Architecture
 
@@ -284,16 +284,16 @@ This supports real backend-driven waiting states through these `SessionState` fi
 
 ### 7.3 Query understanding
 
-`src/quarry/pipeline/decomposition.py` implements heuristic-first classification.
+`src/quarry/pipeline/decomposition.py` implements heuristic-only classification.
 
 Current behavior:
 
-- obvious vague or contextless queries become `clarification_required`
-- obvious factoid/definition queries become `single_hop`
-- obvious comparison/multi-aspect queries become `multi_hop`
-- only ambiguous cases escalate to the decomposition model
+- heuristic patterns identify obvious single-hop queries (factoids, definitions)
+- heuristic patterns identify obvious multi-hop queries (comparisons, multi-aspect questions)
+- queries that don't match any heuristic pattern default to multi_hop
+- MLX model is used only for facet generation in multi-hop queries, not for classification
 
-If the result is `clarification_required`, the session stops early and returns server-generated clarification suggestions.
+This approach eliminates classification delays (~3-5s) and avoids low-confidence model judgments on edge cases.
 
 ### 7.4 Retrieval
 
@@ -532,10 +532,7 @@ Interaction contract:
 The UI handles multiple response modes:
 
 - `response_review`
-- `clarification_required`
 - `generation_failed`
-
-Clarification suggestions are generated server-side and can be clicked to rerun the query.
 
 ## 11. Logging and Observability
 

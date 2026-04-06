@@ -45,15 +45,6 @@ def test_generation_prompt_places_context_and_task_before_citation_rules() -> No
     assert "[PARA] is formatting only" in prompt
 
 
-def test_decomposition_classification_prompt_uses_three_way_schema() -> None:
-    prompt = decomposition_classification_prompt("What did they recommend?")
-
-    assert "Classify this research query into one of three types." in prompt
-    assert "clarification_required" in prompt
-    assert '"What did they recommend?" → clarification_required' in prompt
-    assert '{"query_type": "single_hop" | "multi_hop" | "clarification_required"}' in prompt
-
-
 def test_decomposition_prompt_uses_search_ready_facet_instructions() -> None:
     prompt = decomposition_prompt("How does Advanced Work Packaging affect project cost performance and safety outcomes?", 4)
 
@@ -63,6 +54,7 @@ def test_decomposition_prompt_uses_search_ready_facet_instructions() -> None:
     assert "- Produce 2 to 4 facets" in prompt
     assert '"How does Advanced Work Packaging affect project cost performance?"' in prompt
     assert '{"facets": ["sub-query 1", "sub-query 2", ...]}' in prompt
+    assert "The first character of your response must be '{' and there must be no prefix text." in prompt
 
 
 def test_shared_system_prompt_covers_domain_format_grounding_and_verbatim_rules() -> None:
@@ -198,52 +190,14 @@ def test_repair_generation_prompt_wraps_prior_attempt_into_new_structure() -> No
     assert "## Repair Instruction" in prompt
 
 
-class _ClarificationClient(DecompositionClient):
-    async def classify_query(self, query: str) -> str:
-        return "clarification_required"
-
-    async def decompose_query(self, query: str, max_facets: int) -> list[str]:
-        return [query]
-
-
-def test_query_decomposer_honors_clarification_required_classifier_output() -> None:
-    decomposer = QueryDecomposer(_ClarificationClient(), max_facets=4)
-
-    result = asyncio.run(decomposer.decompose("What did they recommend?"))
-
-    assert result.clarification_required is True
-    assert result.facets == ["What did they recommend?"]
-
-
 class _NoClassificationClient(DecompositionClient):
     def __init__(self, *, facets: list[str] | None = None) -> None:
-        self.classify_called = False
         self.decompose_called = False
         self._facets = facets or []
-
-    async def classify_query(self, query: str) -> str:
-        self.classify_called = True
-        raise AssertionError("classification model should not have been called")
 
     async def decompose_query(self, query: str, max_facets: int) -> list[str]:
         self.decompose_called = True
         return list(self._facets[:max_facets])
-
-
-class _RecordingClassificationClient(DecompositionClient):
-    def __init__(self, *, query_type: str, facets: list[str] | None = None) -> None:
-        self.classify_called = False
-        self.decompose_called = False
-        self.query_type = query_type
-        self.facets = facets or []
-
-    async def classify_query(self, query: str) -> str:
-        self.classify_called = True
-        return self.query_type
-
-    async def decompose_query(self, query: str, max_facets: int) -> list[str]:
-        self.decompose_called = True
-        return list(self.facets[:max_facets])
 
 
 def test_query_decomposer_uses_heuristic_first_for_obvious_single_hop_queries() -> None:
@@ -252,10 +206,8 @@ def test_query_decomposer_uses_heuristic_first_for_obvious_single_hop_queries() 
 
     result = asyncio.run(decomposer.decompose("What is PDRI maturity?"))
 
-    assert result.clarification_required is False
     assert result.query_type.value == "single_hop"
     assert result.facets == ["What is PDRI maturity?"]
-    assert client.classify_called is False
     assert client.decompose_called is False
 
 
@@ -272,28 +224,14 @@ def test_query_decomposer_uses_heuristic_first_for_obvious_multi_hop_queries() -
         decomposer.decompose("What are the key risk factors and recommended mitigation strategies for schedule delays in CII Phase III projects?")
     )
 
-    assert result.clarification_required is False
     assert result.query_type.value == "multi_hop"
     assert len(result.facets) == 2
-    assert client.classify_called is False
     assert client.decompose_called is True
 
 
-def test_query_decomposer_uses_heuristic_first_for_obvious_clarification_queries() -> None:
-    client = _NoClassificationClient()
-    decomposer = QueryDecomposer(client, max_facets=4)
-
-    result = asyncio.run(decomposer.decompose("What did they recommend?"))
-
-    assert result.clarification_required is True
-    assert result.facets == ["What did they recommend?"]
-    assert client.classify_called is False
-    assert client.decompose_called is False
-
-
-def test_query_decomposer_uses_model_classification_when_heuristic_is_inconclusive() -> None:
-    client = _RecordingClassificationClient(
-        query_type="multi_hop",
+def test_query_decomposer_defaults_to_multi_hop_when_heuristic_inconclusive() -> None:
+    """When heuristic cannot classify, decomposer defaults to multi_hop without calling classify model."""
+    client = _NoClassificationClient(
         facets=[
             "Why were retrofit projects delayed?",
             "What evidence links retrofit conditions to those delays?",
@@ -303,7 +241,5 @@ def test_query_decomposer_uses_model_classification_when_heuristic_is_inconclusi
 
     result = asyncio.run(decomposer.decompose("Why were retrofit projects delayed?"))
 
-    assert result.clarification_required is False
     assert result.query_type.value == "multi_hop"
-    assert client.classify_called is True
     assert client.decompose_called is True

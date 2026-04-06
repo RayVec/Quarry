@@ -227,14 +227,6 @@ class HostedQueryDecompositionClient(DecompositionClient):
         self.llm = llm
         self.fallback = fallback or HeuristicDecompositionClient()
 
-    async def classify_query(self, query: str) -> str:
-        try:
-            raw = await self.llm.complete(decomposition_classification_prompt(query), operation="query_classification")
-            return str(parse_json_response(raw)["query_type"])
-        except Exception:
-            logger.warning("classification fell back to heuristic")
-            return await self.fallback.classify_query(query)
-
     async def decompose_query(self, query: str, max_facets: int) -> list[str]:
         try:
             raw = await self.llm.complete(decomposition_prompt(query, max_facets), operation="query_decomposition")

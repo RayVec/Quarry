@@ -257,26 +257,19 @@ It is used in two ways:
 - as the true system message for hosted OpenAI-compatible calls and local transformers chat-style calls
 - prepended directly into MLX task prompts, because the MLX path does not rely on a separate system-message channel
 
-## 9. Query Classification Prompt
+## 9. Query Classification Prompt (Deprecated)
 
-Code:
+**Note: As of the latest version, classification is handled entirely by heuristics. The classification model/prompt is no longer used.**
 
-- `decomposition_classification_prompt(...)`
+Previously used purpose:
 
-Purpose:
+- classify the query as `single_hop` or `multi_hop`
 
-- classify the query as `single_hop`, `multi_hop`, or `clarification_required`
+Current behavior:
 
-Important current behavior:
-
-- QUARRY uses heuristic-first classification
-- the prompt is only used when heuristics do not confidently settle the query type
-
-Expected JSON:
-
-```json
-{"query_type": "single_hop" | "multi_hop" | "clarification_required"}
-```
+- Heuristic patterns in `decomposition.py` identify obvious single-hop and multi-hop queries
+- Queries that don't match any pattern default to `multi_hop`
+- MLX model is used only for facet generation, not classification
 
 ## 10. Query Decomposition Prompt
 

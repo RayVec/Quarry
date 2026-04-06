@@ -611,7 +611,8 @@ def test_regeneration_accepts_shorter_exact_quote_for_clean_sentence_repair() ->
     assert regenerated_sentence.references[0].verified is True
 
 
-def test_clarification_required_query_includes_rewrite_suggestions() -> None:
+def test_query_with_vague_wording_still_processes() -> None:
+    """Vague queries now default to multi_hop and are processed normally."""
     chunk_store = InMemoryChunkStore(build_chunks())
     service = PipelineService(
         chunk_store=chunk_store,
@@ -636,10 +637,9 @@ def test_clarification_required_query_includes_rewrite_suggestions() -> None:
 
     session = asyncio.run(service.run_query(QueryRequest(query="schedule")))
 
-    assert session.response_mode.value == "clarification_required"
-    assert len(session.clarification_suggestions) == 3
-    assert all(suggestion for suggestion in session.clarification_suggestions)
-
+    # No longer triggers clarification - processes as multi_hop
+    assert session.response_mode.value == "response_review"
+    assert session.query_type.value in ("single_hop", "multi_hop")
 
 def test_single_hop_generation_request_uses_trimmed_citation_budget() -> None:
     chunks = build_many_chunks(12)

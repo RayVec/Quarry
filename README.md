@@ -8,7 +8,7 @@ Runs on Apple Silicon (MLX) or any CUDA GPU. No database, no cloud dependency. O
 
 ## Requirements
 
-- Python 3.13+
+- **Python 3.13+** (tested on Python 3.13.2; see [docs/PYTHON_313_COMPATIBILITY.md](docs/PYTHON_313_COMPATIBILITY.md) for the April 6 Apple Silicon MPS crash note)
 - Node.js 18+
 - Mac with Apple Silicon (M1 or later) — or a Linux/Windows machine with a CUDA GPU
 
@@ -22,7 +22,8 @@ cd Quarry
 ```
 
 ```bash
-python3 -m venv .venv
+# Use Python 3.13+
+python3.13 -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev,local]"
 ```
@@ -93,6 +94,9 @@ npm run dev -- --host 127.0.0.1 --port 5173
 ```
 
 Open **http://127.0.0.1:5173** and start asking questions.
+
+Apple Silicon note:
+If you are reading older crash notes, the April 6 heap-corruption issue was not a Python 3.13 incompatibility. The root cause was concurrent local torch/MPS inference on shared model instances, and current code now serializes access to those models. If you still hit native MPS instability on your machine, set `runtime.local_model_device = "cpu"` as a fallback.
 
 ---
 

@@ -124,12 +124,6 @@ class HeuristicDecompositionClient(DecompositionClient):
         " and ",
     )
 
-    async def classify_query(self, query: str) -> str:
-        lowered = f" {query.lower()} "
-        if any(hint in lowered for hint in self.MULTI_HOP_HINTS) or query.count(",") > 0:
-            return "multi_hop"
-        return "single_hop"
-
     async def decompose_query(self, query: str, max_facets: int) -> list[str]:
         normalized = normalize_text(query)
         affect_match = re.match(

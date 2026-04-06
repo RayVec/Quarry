@@ -29,9 +29,6 @@ class ChunkStore(Protocol):
 
 
 class DecompositionClient(Protocol):
-    async def classify_query(self, query: str) -> str:
-        ...
-
     async def decompose_query(self, query: str, max_facets: int) -> list[str]:
         ...
 

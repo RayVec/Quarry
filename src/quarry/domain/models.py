@@ -45,7 +45,6 @@ class ConfidenceLabel(str, Enum):
 
 class ResponseMode(str, Enum):
     RESPONSE_REVIEW = "response_review"
-    CLARIFICATION_REQUIRED = "clarification_required"
     GENERATION_FAILED = "generation_failed"
 
 
@@ -62,7 +61,6 @@ class QueryProgressStage(str, Enum):
     EVIDENCE = "evidence"
     WRITING = "writing"
     CHECKING = "checking"
-    CLARIFICATION = "clarification"
     COMPLETED = "completed"
     FAILED = "failed"
 
@@ -270,7 +268,6 @@ class SessionState(BaseModel):
     ui_messages: list[UIMessage] = Field(default_factory=list)
     removed_ungrounded_claim_count: int = 0
     response_mode: ResponseMode = ResponseMode.RESPONSE_REVIEW
-    clarification_suggestions: list[str] = Field(default_factory=list)
     generation_provider: str = "unknown"
     parser_provider: str = "unknown"
     runtime_mode: RuntimeMode = RuntimeMode.HYBRID
@@ -286,7 +283,6 @@ class SessionState(BaseModel):
 class DecompositionResult(BaseModel):
     query_type: QueryType
     facets: list[str]
-    clarification_required: bool = False
 
 
 class RetrievalFilters(BaseModel):

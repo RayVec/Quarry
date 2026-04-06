@@ -56,9 +56,9 @@ def parse_metric(text: str) -> int:
 @pytest.fixture(scope="session")
 def backend_server(tmp_path_factory: pytest.TempPathFactory):
     artifact_dir = tmp_path_factory.mktemp("quarry-e2e-artifacts")
-    output_dir = ROOT / "output" / "playwright"
-    output_dir.mkdir(parents=True, exist_ok=True)
-    backend_log = (output_dir / "backend.log").open("wb")
+    log_dir = ROOT / "data" / "logs" / "playwright"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    backend_log = (log_dir / "backend.log").open("wb")
     env = os.environ.copy()
     env.update(
         {
@@ -89,9 +89,9 @@ def backend_server(tmp_path_factory: pytest.TempPathFactory):
 
 @pytest.fixture(scope="session")
 def web_server(backend_server):
-    output_dir = ROOT / "output" / "playwright"
-    output_dir.mkdir(parents=True, exist_ok=True)
-    frontend_log = (output_dir / "frontend.log").open("wb")
+    log_dir = ROOT / "data" / "logs" / "playwright"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    frontend_log = (log_dir / "frontend.log").open("wb")
     process = subprocess.Popen(
         ["npm", "run", "dev", "--", "--host", "127.0.0.1", "--port", "5173", "--strictPort"],
         cwd=ROOT / "web",
