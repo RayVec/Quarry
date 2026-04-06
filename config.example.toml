@@ -20,7 +20,6 @@ mode = "hybrid"
 # profile = "apple_silicon"
 # profile = "gpu"
 
-
 # ============================================================
 # STEP 2 — Add your API key
 # Only required when mode = "hybrid" or mode = "hosted".
@@ -28,14 +27,22 @@ mode = "hybrid"
 # ============================================================
 [hosted]
 
+# Hosted provider:
+#   openai_compatible  — OpenRouter/OpenAI/Azure-compatible chat completions endpoint
+#   gemini             — Google AI Studio Gemini API
+provider = "openai_compatible"
+
 # Your API key — this is the main value most users need to fill in.
-# Supports any OpenAI-compatible endpoint (OpenRouter, OpenAI, Azure, etc.)
+# Supports both providers. For provider="gemini", this can be omitted if GEMINI_API_KEY is set.
 llm_api_key = "YOUR_API_KEY_HERE"
 
-# The API endpoint — defaults to OpenRouter, which gives access to many models
+# The API endpoint — required for provider="openai_compatible"
+# (ignored when provider="gemini")
 llm_base_url = "https://openrouter.ai/api/v1"
 
 # Which model to use for answer generation
+#   openai_compatible example: "openai/gpt-4o-mini"
+#   gemini example: "gemini-3-flash-preview"
 llm_model = "openai/gpt-4o-mini"
 
 # Whether to use the hosted model for generation (leave the others false)

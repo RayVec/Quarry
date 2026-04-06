@@ -45,6 +45,17 @@ def validate_runtime_mode(value: str | None) -> str:
     raise ValueError(f"Unsupported QUARRY runtime mode: {value!r}. Use one of: local, hybrid, hosted.")
 
 
+def validate_llm_provider(value: str | None) -> str:
+    normalized = (value or "").strip().lower()
+    allowed = {"openai_compatible", "gemini"}
+    if normalized in allowed:
+        return normalized
+    raise ValueError(
+        f"Unsupported QUARRY hosted LLM provider: {value!r}. "
+        "Use one of: openai_compatible, gemini."
+    )
+
+
 def load_file_config(config_path: str | Path | None = None) -> dict[str, object]:
     resolved = Path(config_path) if config_path else Path(os.getenv("QUARRY_CONFIG_PATH", default_config_path()))
     if not resolved.exists():
@@ -86,6 +97,8 @@ def load_file_config(config_path: str | Path | None = None) -> dict[str, object]
             "ambiguity_gap_threshold": "ambiguity_gap_threshold",
         },
         "hosted": {
+            "provider": "llm_provider",
+            "llm_provider": "llm_provider",
             "llm_base_url": "llm_base_url",
             "llm_api_key": "llm_api_key",
             "llm_model": "llm_model",
@@ -186,6 +199,7 @@ class Settings:
     llm_base_url: str | None = None
     llm_api_key: str | None = None
     llm_model: str = "gpt-4o-mini"
+    llm_provider: str = "openai_compatible"
     runtime_mode: str = "hybrid"
     runtime_profile: str = default_runtime_profile()
     embedding_base_url: str | None = None
@@ -219,10 +233,23 @@ class Settings:
 
     def __post_init__(self) -> None:
         self.runtime_mode = validate_runtime_mode(self.runtime_mode)
+        self.llm_provider = validate_llm_provider(self.llm_provider)
 
     @classmethod
     def from_env(cls, *, config_path: str | Path | None = None) -> "Settings":
         file_config = load_file_config(config_path)
+        llm_provider = validate_llm_provider(
+            os.getenv(
+                "QUARRY_LLM_PROVIDER",
+                os.getenv(
+                    "QUARRY_HOSTED_PROVIDER",
+                    str(_config_value(file_config, "llm_provider", "openai_compatible")),
+                ),
+            )
+        )
+        configured_llm_api_key = os.getenv("QUARRY_LLM_API_KEY", str(_config_value(file_config, "llm_api_key", ""))).strip()
+        gemini_env_api_key = os.getenv("QUARRY_GEMINI_API_KEY", os.getenv("GEMINI_API_KEY", "")).strip()
+        resolved_llm_api_key = configured_llm_api_key or (gemini_env_api_key if llm_provider == "gemini" else "")
         return cls(
             app_name=os.getenv("QUARRY_APP_NAME", str(_config_value(file_config, "app_name", "QUARRY"))),
             corpus_dir=Path(os.getenv("QUARRY_CORPUS_DIR", str(_config_value(file_config, "corpus_dir", "data/corpus")))),
@@ -240,8 +267,9 @@ class Settings:
             ambiguity_gap_threshold=float(os.getenv("QUARRY_AMBIGUITY_GAP_THRESHOLD", str(_config_value(file_config, "ambiguity_gap_threshold", 0.05)))),
             cors_origin=os.getenv("QUARRY_CORS_ORIGIN", str(_config_value(file_config, "cors_origin", "http://127.0.0.1:5173"))),
             llm_base_url=os.getenv("QUARRY_LLM_BASE_URL", str(_config_value(file_config, "llm_base_url", ""))) or None,
-            llm_api_key=os.getenv("QUARRY_LLM_API_KEY", str(_config_value(file_config, "llm_api_key", ""))) or None,
+            llm_api_key=resolved_llm_api_key or None,
             llm_model=os.getenv("QUARRY_LLM_MODEL", str(_config_value(file_config, "llm_model", "gpt-4o-mini"))),
+            llm_provider=llm_provider,
             runtime_mode=validate_runtime_mode(os.getenv("QUARRY_RUNTIME_MODE", str(_config_value(file_config, "runtime_mode", "hybrid")))),
             runtime_profile=os.getenv("QUARRY_RUNTIME_PROFILE", str(_config_value(file_config, "runtime_profile", default_runtime_profile()))),
             embedding_base_url=os.getenv("QUARRY_EMBEDDING_BASE_URL", str(_config_value(file_config, "embedding_base_url", ""))) or None,
@@ -287,6 +315,12 @@ class Settings:
     @property
     def has_live_llm_credentials(self) -> bool:
         return bool(self.llm_base_url and self.llm_api_key)
+
+    @property
+    def has_live_generation_credentials(self) -> bool:
+        if self.llm_provider == "gemini":
+            return bool(self.llm_api_key)
+        return self.has_live_llm_credentials
 
     @property
     def active_model_ids(self) -> list[str]:

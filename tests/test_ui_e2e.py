@@ -129,6 +129,38 @@ def run_query(page: Page, query: str | None = None) -> None:
     close_diagnostics(page)
 
 
+def open_selection_comment_editor(page: Page) -> None:
+    page.evaluate(
+        """
+        () => {
+          const host = document.querySelector('.response-reading-flow');
+          const target = document.querySelector('.response-inline-sentence-text');
+          if (!host || !target) return;
+
+          const walker = document.createTreeWalker(target, NodeFilter.SHOW_TEXT);
+          const firstTextNode = walker.nextNode();
+          if (!firstTextNode || !firstTextNode.textContent) return;
+
+          const textLength = firstTextNode.textContent.trim().length;
+          const endOffset = Math.max(6, Math.min(textLength, 36));
+          const range = document.createRange();
+          range.setStart(firstTextNode, 0);
+          range.setEnd(firstTextNode, endOffset);
+
+          const selection = window.getSelection();
+          if (!selection) return;
+          selection.removeAllRanges();
+          selection.addRange(range);
+
+          host.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+        }
+        """
+    )
+    expect(page.get_by_test_id("selection-comment-trigger")).to_be_visible()
+    page.get_by_test_id("selection-comment-trigger").click()
+    expect(page.get_by_test_id("selection-comment-editor")).to_be_visible()
+
+
 def test_response_review_dialog_and_feedback_flow(page: Page, web_server) -> None:
     run_query(page)
 
@@ -152,12 +184,19 @@ def test_response_review_dialog_and_feedback_flow(page: Page, web_server) -> Non
     page.get_by_test_id("undo-citation-replacement").click()
     expect(page.locator(".citation-pill.replaced")).to_have_count(0)
 
-    page.locator("[data-testid^='disagree-']").first.click()
-    expect(page.get_by_test_id("selection-comment-editor")).to_be_visible()
+    open_selection_comment_editor(page)
     page.get_by_test_id("selection-comment-input").fill(
         "This claim still needs a tighter explanation of how procurement sequencing affects schedule risk."
     )
     page.get_by_test_id("save-selection-comment").click()
+    expect(page.get_by_test_id("selection-comment-trigger")).to_have_count(0)
+    highlight = page.locator("[data-testid^='annotation-highlight-']").first
+    expect(highlight).to_be_visible()
+    highlight.click()
+    expect(page.get_by_test_id("selection-comment-active-editor")).to_be_visible()
+    edit_input = page.locator("[data-testid^='selection-comment-edit-input-']").first
+    edit_input.fill("Updated comment for this highlighted passage.")
+    page.locator("[data-testid^='update-selection-comment-']").first.click()
     expect(page.get_by_test_id("feedback-summary")).to_contain_text("2 comments captured, 0 citation replacements pending.")
 
 
@@ -165,12 +204,11 @@ def test_unified_refinement_flow(page: Page, web_server) -> None:
     run_query(page, "How do modular construction and procurement planning affect schedule risk?")
 
     open_diagnostics(page)
-    initial_sentences = parse_metric(page.get_by_test_id("status-sentences").inner_text())
+    _initial_sentences = parse_metric(page.get_by_test_id("status-sentences").inner_text())
     close_diagnostics(page)
 
     page.get_by_test_id("toggle-review-panel").click()
-    page.locator("[data-testid^='disagree-']").first.click()
-    expect(page.get_by_test_id("selection-comment-editor")).to_be_visible()
+    open_selection_comment_editor(page)
     page.get_by_test_id("selection-comment-input").fill("Please add detail about shutdown planning risks.")
     page.get_by_test_id("save-selection-comment").click()
     expect(page.get_by_test_id("feedback-summary")).to_contain_text("1 comments captured, 0 citation replacements pending.")

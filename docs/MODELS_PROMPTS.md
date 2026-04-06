@@ -168,19 +168,31 @@ For obvious single-hop queries, retrieval budgets are smaller than for multi-hop
 
 Hosted generation is optional.
 
-If configured, the hosted OpenAI-compatible model is used for:
+If configured, a hosted model is used for:
 
 - answer generation
 - supplement generation
 - refinement generation
 - sentence regeneration
 
+Supported hosted providers for generation:
+
+- `openai_compatible` (OpenRouter/OpenAI/Azure-compatible endpoints)
+- `gemini` (Google AI Studio Gemini API)
+
 Current config knobs:
 
+- `hosted.provider`
 - `hosted.llm_base_url`
 - `hosted.llm_api_key`
 - `hosted.llm_model`
 - `hosted.use_live_generation`
+
+Provider-specific behavior:
+
+- `openai_compatible` uses `hosted.llm_base_url` + `hosted.llm_api_key`
+- `gemini` uses `hosted.llm_api_key` (or environment variable `GEMINI_API_KEY`)
+- Gemini support in this release is generation-only; decomposition and metadata-enrichment hosted paths remain OpenAI-compatible
 
 The recommended mixed strategy is:
 
@@ -286,7 +298,7 @@ Current design:
 Expected JSON:
 
 ```json
-{"facets": ["sub-query 1", "sub-query 2"]}
+{ "facets": ["sub-query 1", "sub-query 2"] }
 ```
 
 ## 11. Metadata Enrichment Prompt

@@ -3,6 +3,15 @@ import pytest
 from quarry.config import Settings
 
 
+def test_settings_default_llm_provider_is_openai_compatible(monkeypatch, tmp_path) -> None:
+    monkeypatch.delenv("QUARRY_LLM_PROVIDER", raising=False)
+    monkeypatch.delenv("QUARRY_HOSTED_PROVIDER", raising=False)
+
+    settings = Settings.from_env(config_path=tmp_path / "missing-config.toml")
+
+    assert settings.llm_provider == "openai_compatible"
+
+
 def test_settings_from_env_defaults_to_apple_profile_on_apple_silicon(monkeypatch) -> None:
     monkeypatch.delenv("QUARRY_RUNTIME_PROFILE", raising=False)
     monkeypatch.setattr("quarry.config.is_apple_silicon_host", lambda: True)
@@ -60,6 +69,7 @@ mode = "hybrid"
 profile = "apple_silicon"
 
 [hosted]
+provider = "gemini"
 llm_base_url = "https://openrouter.ai/api/v1"
 llm_api_key = "secret"
 llm_model = "stepfun/step-3.5-flash:free"
@@ -72,6 +82,7 @@ use_live_decomposition = false
 
     assert settings.runtime_mode == "hybrid"
     assert settings.runtime_profile == "apple_silicon"
+    assert settings.llm_provider == "gemini"
     assert settings.llm_base_url == "https://openrouter.ai/api/v1"
     assert settings.llm_model == "stepfun/step-3.5-flash:free"
     assert settings.use_live_generation is True
@@ -96,3 +107,30 @@ llm_model = "stepfun/step-3.5-flash:free"
 
     assert settings.runtime_mode == "local"
     assert settings.llm_model == "override-model"
+
+
+def test_gemini_provider_uses_standard_gemini_env_api_key(monkeypatch, tmp_path) -> None:
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        """
+[hosted]
+provider = "gemini"
+"""
+    )
+    monkeypatch.setenv("QUARRY_LLM_PROVIDER", "gemini")
+    monkeypatch.delenv("QUARRY_LLM_API_KEY", raising=False)
+    monkeypatch.delenv("QUARRY_GEMINI_API_KEY", raising=False)
+    monkeypatch.setenv("GEMINI_API_KEY", "gemini-key")
+
+    settings = Settings.from_env(config_path=config_path)
+
+    assert settings.llm_provider == "gemini"
+    assert settings.llm_api_key == "gemini-key"
+    assert settings.has_live_generation_credentials is True
+
+
+def test_invalid_llm_provider_is_rejected(monkeypatch) -> None:
+    monkeypatch.setenv("QUARRY_LLM_PROVIDER", "unsupported-provider")
+
+    with pytest.raises(ValueError, match="Unsupported QUARRY hosted LLM provider"):
+        Settings.from_env()

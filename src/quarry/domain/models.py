@@ -88,7 +88,6 @@ class ReviewWarning(str, Enum):
     STRUCTURAL_FACT = "structural_fact"
     OVER_CITED = "over_cited"
     REPLACEMENT_PENDING = "replacement_pending"
-    DISAGREEMENT_FLAGGED = "disagreement_flagged"
     CONFIDENCE_UNKNOWN = "confidence_unknown"
 
 
@@ -168,7 +167,6 @@ class ParsedSentence(BaseModel):
     paragraph_index: int = 0
     warnings: list[ReviewWarning] = Field(default_factory=list)
     raw_text: str = ""
-    disagreement_flagged: bool = False
 
     @property
     def structural_warning(self) -> bool:
@@ -202,9 +200,6 @@ class ReviewComment(BaseModel):
         serialization_alias="comment_text",
     )
     resolved: bool = False
-    sentence_index: int | None = None
-    sentence_type: SentenceType | None = None
-    sentence_text: str | None = None
     created_at: datetime = Field(default_factory=utc_now)
 
 

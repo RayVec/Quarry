@@ -417,18 +417,6 @@ class PipelineService:
 
     def add_review_comment(self, session_id: str, request: ReviewCommentRequest) -> SessionState:
         session = self.session_store.get(session_id)
-        sentence_type = None
-        sentence_text = None
-        sentence_index = None
-        for sentence in session.parsed_sentences:
-            start = request.char_start
-            end = request.char_end
-            if start <= end and request.text_selection in sentence.sentence_text:
-                sentence.disagreement_flagged = True
-                sentence_type = sentence.sentence_type
-                sentence_text = sentence.sentence_text
-                sentence_index = sentence.sentence_index
-                break
         session.feedback.comments.append(
             ReviewComment(
                 comment_id=str(uuid4()),
@@ -436,9 +424,6 @@ class PipelineService:
                 char_start=request.char_start,
                 char_end=request.char_end,
                 comment_text=request.comment_text.strip(),
-                sentence_index=sentence_index,
-                sentence_type=sentence_type,
-                sentence_text=sentence_text,
             )
         )
         return self.session_store.save(session)
@@ -570,11 +555,6 @@ class PipelineService:
         prior_response = session.generated_response
         working_citations = list(session.citation_index)
         selection_comments = [comment for comment in session.feedback.comments if not comment.resolved]
-        replacement_sentence_comments = {
-            comment.sentence_index: comment.comment_text
-            for comment in selection_comments
-            if comment.sentence_index is not None
-        }
         logger.info(
             "refinement started",
             extra={
@@ -586,7 +566,7 @@ class PipelineService:
         try:
             step2_rewrites = 0
             step2_rewrites = 0
-            if selection_comments or replacement_sentence_comments:
+            if selection_comments:
                 comment_lines = [
                     f'Selected "{comment.text_selection}": {comment.comment_text}'
                     for comment in selection_comments

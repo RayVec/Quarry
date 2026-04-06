@@ -472,6 +472,9 @@ Current behavior:
 - older assistant messages remain visible but read-only
 - comment capture uses text selections (character ranges) instead of sentence-index or response-level freeform comments
 - refine input is selection-driven; response-level supplement comments are no longer a separate path
+- comment affordance is hidden by default; selecting text reveals a floating comment icon near the selection
+- comment composer/editing uses a compact floating card anchored near selection/highlight instead of in-flow expanding panels
+- citation tooltip display is suppressed while a selection icon/card is active to avoid interaction overlap
 
 ### 10.2.1 Paragraph layout and match quality
 
@@ -515,6 +518,14 @@ During refinement, the pipeline attempts to re-anchor each selection in the new 
 - if the selection cannot be located, the comment moves to `feedback.resolved_comments`
 
 Frontend currently exposes selection comment creation/edit/delete in the response review surface and summarizes active/resolved counts in the review panel.
+
+Interaction contract:
+
+- no active selection/highlight: no comment controls rendered
+- active browser selection: show transient comment icon near the selection
+- click icon: open compact comment card (textarea + submit)
+- save: clear transient selection UI and render persistent yellow highlight
+- click highlight: open comment card for one or more overlapping comments at that location
 
 ### 10.3 UI modes
 

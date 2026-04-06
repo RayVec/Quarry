@@ -316,6 +316,7 @@ export default function App() {
   const resumedPersistedPendingRef = useRef(false);
   const workspaceColumnRef = useRef<HTMLElement | null>(null);
   const dockedComposerRef = useRef<HTMLFormElement | null>(null);
+  const localCommentIds = useRef(new Set<string>());
   const [dockedComposerOffset, setDockedComposerOffset] = useState(0);
 
   const latestAssistant = useMemo(
@@ -556,18 +557,107 @@ export default function App() {
       comment_text: string;
     },
   ) {
-    const response = await api.addComment(sessionId, payload);
-    startTransition(() => replaceAssistantEntrySession(entryId, response.session));
+    try {
+      const response = await api.addComment(sessionId, payload);
+      startTransition(() => replaceAssistantEntrySession(entryId, response.session));
+    } catch {
+      // Backend unavailable — save comment locally
+      const localComment = {
+        comment_id: makeId(),
+        text_selection: payload.text_selection,
+        char_start: payload.char_start,
+        char_end: payload.char_end,
+        comment_text: payload.comment_text,
+        resolved: false,
+      };
+      localCommentIds.current.add(localComment.comment_id);
+      startTransition(() => {
+        setThread((current) =>
+          current.map((entry) => {
+            if (!isAssistantEntry(entry) || entry.id !== entryId) return entry;
+            return {
+              ...entry,
+              session: {
+                ...entry.session,
+                feedback: {
+                  ...entry.session.feedback,
+                  comments: [...entry.session.feedback.comments, localComment],
+                },
+              },
+            };
+          }),
+        );
+      });
+    }
+  }
+
+  function updateCommentLocally(entryId: string, commentId: string, commentText: string) {
+    startTransition(() => {
+      setThread((current) =>
+        current.map((entry) => {
+          if (!isAssistantEntry(entry) || entry.id !== entryId) return entry;
+          return {
+            ...entry,
+            session: {
+              ...entry.session,
+              feedback: {
+                ...entry.session.feedback,
+                comments: entry.session.feedback.comments.map((c) =>
+                  c.comment_id === commentId ? { ...c, comment_text: commentText } : c,
+                ),
+              },
+            },
+          };
+        }),
+      );
+    });
+  }
+
+  function deleteCommentLocally(entryId: string, commentId: string) {
+    localCommentIds.current.delete(commentId);
+    startTransition(() => {
+      setThread((current) =>
+        current.map((entry) => {
+          if (!isAssistantEntry(entry) || entry.id !== entryId) return entry;
+          return {
+            ...entry,
+            session: {
+              ...entry.session,
+              feedback: {
+                ...entry.session.feedback,
+                comments: entry.session.feedback.comments.filter((c) => c.comment_id !== commentId),
+              },
+            },
+          };
+        }),
+      );
+    });
   }
 
   async function handleUpdateSelectionComment(entryId: string, sessionId: string, commentId: string, commentText: string) {
-    const response = await api.updateComment(sessionId, commentId, commentText);
-    startTransition(() => replaceAssistantEntrySession(entryId, response.session));
+    if (localCommentIds.current.has(commentId)) {
+      updateCommentLocally(entryId, commentId, commentText);
+      return;
+    }
+    try {
+      const response = await api.updateComment(sessionId, commentId, commentText);
+      startTransition(() => replaceAssistantEntrySession(entryId, response.session));
+    } catch {
+      updateCommentLocally(entryId, commentId, commentText);
+    }
   }
 
   async function handleDeleteSelectionComment(entryId: string, sessionId: string, commentId: string) {
-    const response = await api.deleteComment(sessionId, commentId);
-    startTransition(() => replaceInteractiveSession(response.session));
+    if (localCommentIds.current.has(commentId)) {
+      deleteCommentLocally(entryId, commentId);
+      return;
+    }
+    try {
+      const response = await api.deleteComment(sessionId, commentId);
+      startTransition(() => replaceInteractiveSession(response.session));
+    } catch {
+      deleteCommentLocally(entryId, commentId);
+    }
   }
 
   async function handleRefine() {

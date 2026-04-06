@@ -354,7 +354,10 @@ def warm_local_models(settings: Settings) -> dict[str, object]:
             page_start=1,
             page_end=1,
         )
-        reranker = LocalCrossEncoderReranker(settings.local_reranker_model, device=settings.local_model_device)
+        reranker = LocalCrossEncoderReranker(
+            settings.local_reranker_model,
+            device=settings.local_model_device,
+        )
         asyncio.run(
             reranker.rerank(
                 "modular construction",
@@ -375,7 +378,10 @@ def warm_local_models(settings: Settings) -> dict[str, object]:
 
     try:
         logger.info("warmup starting nli", extra={"model": settings.nli_model_name})
-        nli = LocalMNLIClient(settings.nli_model_name, device=settings.local_model_device)
+        nli = LocalMNLIClient(
+            settings.nli_model_name,
+            device=settings.local_model_device,
+        )
         asyncio.run(
             nli.score(
                 "Modular construction reduced schedule risk.",

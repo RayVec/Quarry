@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 import json
 from pathlib import Path
 import re
-from typing import Sequence
+from typing import Protocol, Sequence
 
 import httpx
 
@@ -49,6 +50,7 @@ from quarry.prompts import (
     generation_prompt,
     metadata_enrichment_prompt,
     parse_json_response,
+    with_shared_system_prompt,
 )
 from quarry.retries import with_retries
 
@@ -64,6 +66,11 @@ class RuntimeClientProfile:
     runtime_profile: RuntimeProfile
     local_model_status: dict[str, str]
     active_model_ids: list[str]
+
+
+class CompletionLLM(Protocol):
+    async def complete(self, prompt: str, *, temperature: float = 0.1, operation: str = "completion") -> str:
+        ...
 
 
 class OpenAICompatibleLLM:
@@ -104,12 +111,108 @@ class OpenAICompatibleLLM:
                 payload = response.json()
                 return payload["choices"][0]["message"]["content"]
 
-        raw = await with_retries(request_operation)
+        try:
+            raw = await with_retries(request_operation)
+        except Exception as exc:
+            logger.exception(
+                "hosted llm request failed",
+                extra={
+                    "operation": operation,
+                    "provider": self.base_url,
+                    "model": self.model,
+                    "error": str(exc),
+                    "error_type": exc.__class__.__name__,
+                    "latency_ms": elapsed_ms(start),
+                    "console_visible": True,
+                },
+            )
+            raise
         logger.info(
             "hosted llm request completed",
             extra={
                 "operation": operation,
                 "provider": self.base_url,
+                "model": self.model,
+                "response": raw,
+                "latency_ms": elapsed_ms(start),
+                "console_visible": True,
+            },
+        )
+        return raw
+
+
+class GeminiLLM:
+    def __init__(self, *, api_key: str | None, model: str) -> None:
+        self.api_key = api_key
+        self.model = model
+
+    async def complete(self, prompt: str, *, temperature: float = 0.1, operation: str = "completion") -> str:
+        logger.info(
+            "gemini llm request started",
+            extra={
+                "operation": operation,
+                "provider": "gemini",
+                "model": self.model,
+                "api_key_configured": bool(self.api_key),
+                "temperature": temperature,
+                "prompt": prompt,
+                "console_visible": True,
+            },
+        )
+        start = timed()
+
+        async def request_operation() -> str:
+            def invoke() -> str:
+                try:
+                    from google import genai
+                except Exception as exc:
+                    raise RuntimeError(
+                        "google-genai is required for hosted.provider=gemini. "
+                        "Install dependencies with `pip install -e \".[local]\"` "
+                        "or `pip install -U google-genai`."
+                    ) from exc
+
+                client_kwargs: dict[str, str] = {}
+                if self.api_key:
+                    client_kwargs["api_key"] = self.api_key
+                client = genai.Client(**client_kwargs)
+                response = client.models.generate_content(
+                    model=self.model,
+                    contents=with_shared_system_prompt(prompt),
+                    config={"temperature": temperature},
+                )
+                text = getattr(response, "text", None)
+                if isinstance(text, str) and text.strip():
+                    return text
+                if text is not None:
+                    rendered = str(text).strip()
+                    if rendered:
+                        return rendered
+                raise RuntimeError("Gemini response did not include text content.")
+
+            return await asyncio.to_thread(invoke)
+
+        try:
+            raw = await with_retries(request_operation)
+        except Exception as exc:
+            logger.exception(
+                "gemini llm request failed",
+                extra={
+                    "operation": operation,
+                    "provider": "gemini",
+                    "model": self.model,
+                    "error": str(exc),
+                    "error_type": exc.__class__.__name__,
+                    "latency_ms": elapsed_ms(start),
+                    "console_visible": True,
+                },
+            )
+            raise
+        logger.info(
+            "gemini llm request completed",
+            extra={
+                "operation": operation,
+                "provider": "gemini",
                 "model": self.model,
                 "response": raw,
                 "latency_ms": elapsed_ms(start),
@@ -165,15 +268,24 @@ class HostedMetadataEnricher(MetadataEnricher):
 
 
 class HostedGenerationClient(GenerationClient):
-    def __init__(self, llm: OpenAICompatibleLLM, fallback: GenerationClient | None = None) -> None:
+    def __init__(self, llm: CompletionLLM, fallback: GenerationClient | None = None) -> None:
         self.llm = llm
         self.fallback = fallback or ConservativeFallbackGenerationClient()
 
     async def generate(self, request: GenerationRequest) -> str:
         try:
             return await self.llm.complete(generation_prompt(request), temperature=0.2, operation=f"generation:{request.mode}")
-        except Exception:
-            logger.warning("generation fell back to conservative no-ref implementation")
+        except Exception as exc:
+            logger.exception(
+                "hosted generation failed; falling back to conservative no-ref implementation",
+                extra={
+                    "mode": request.mode,
+                    "provider_class": self.llm.__class__.__name__,
+                    "error": str(exc),
+                    "error_type": exc.__class__.__name__,
+                    "console_visible": True,
+                },
+            )
             return await self.fallback.generate(request)
 
 
@@ -351,16 +463,78 @@ def build_runtime_clients(
 
     text_backend: LocalTextCompletionBackend | None = None
     mlx_backend: MLXTextCompletionBackend | None = None
-    live_llm = (
+    needs_openai_llm = settings.has_live_llm_credentials and (
+        (settings.use_live_generation and settings.llm_provider == "openai_compatible")
+        or settings.use_live_decomposition
+        or settings.use_live_metadata_enrichment
+    )
+    live_openai_llm = (
         OpenAICompatibleLLM(
             base_url=settings.llm_base_url,
             api_key=settings.llm_api_key,
             model=settings.llm_model,
         )
-        if settings.has_live_llm_credentials
-        and (settings.use_live_generation or settings.use_live_decomposition or settings.use_live_metadata_enrichment)
+        if needs_openai_llm
         else None
     )
+    live_generation_llm: CompletionLLM | None
+    if settings.use_live_generation and settings.has_live_generation_credentials:
+        if settings.llm_provider == "gemini":
+            live_generation_llm = GeminiLLM(api_key=settings.llm_api_key, model=settings.llm_model)
+        else:
+            live_generation_llm = live_openai_llm or OpenAICompatibleLLM(
+                base_url=settings.llm_base_url,
+                api_key=settings.llm_api_key,
+                model=settings.llm_model,
+            )
+    else:
+        live_generation_llm = None
+
+    logger.info(
+        "hosted generation configuration",
+        extra={
+            "runtime_mode": runtime_mode.value,
+            "runtime_profile": runtime_profile.value,
+            "use_live_generation": settings.use_live_generation,
+            "llm_provider": settings.llm_provider,
+            "llm_model": settings.llm_model,
+            "llm_base_url_configured": bool(settings.llm_base_url),
+            "llm_api_key_configured": bool(settings.llm_api_key),
+            "live_generation_enabled": live_generation_llm is not None,
+            "local_model_device": getattr(settings, "local_model_device", "auto"),
+            "console_visible": True,
+        },
+    )
+    if settings.llm_provider == "gemini" and settings.llm_base_url:
+        logger.info(
+            "hosted llm base_url is ignored when provider=gemini",
+            extra={
+                "llm_base_url": settings.llm_base_url,
+                "console_visible": True,
+            },
+        )
+    if settings.use_live_generation and live_generation_llm is None:
+        if settings.llm_provider == "gemini":
+            logger.warning(
+                "hosted generation is enabled but gemini credentials are missing; falling back to local/deterministic generation",
+                extra={
+                    "missing": ["hosted.llm_api_key or GEMINI_API_KEY"],
+                    "console_visible": True,
+                },
+            )
+        else:
+            missing_fields: list[str] = []
+            if not settings.llm_base_url:
+                missing_fields.append("hosted.llm_base_url")
+            if not settings.llm_api_key:
+                missing_fields.append("hosted.llm_api_key")
+            logger.warning(
+                "hosted generation is enabled but OpenAI-compatible credentials are incomplete; falling back to local/deterministic generation",
+                extra={
+                    "missing": missing_fields,
+                    "console_visible": True,
+                },
+            )
 
     def ensure_local_text_backend() -> LocalTextCompletionBackend:
         nonlocal text_backend
@@ -383,8 +557,8 @@ def build_runtime_clients(
             )
         return mlx_backend
 
-    if settings.use_live_decomposition and live_llm is not None:
-        decomposition = HostedQueryDecompositionClient(live_llm)
+    if settings.use_live_decomposition and live_openai_llm is not None:
+        decomposition = HostedQueryDecompositionClient(live_openai_llm)
         local_status["decomposition"] = "hosted"
     elif use_local_models:
         if settings.uses_mlx_profile and (runtime_mode == RuntimeMode.LOCAL or is_local_component_ready(settings, "text")):
@@ -407,8 +581,8 @@ def build_runtime_clients(
         local_status["decomposition"] = "heuristic"
         local_status["parser"] = "heuristic"
 
-    if settings.use_live_generation and live_llm is not None:
-        generation = HostedGenerationClient(live_llm)
+    if settings.use_live_generation and live_generation_llm is not None:
+        generation = HostedGenerationClient(live_generation_llm)
         generation_provider = f"hosted:{settings.llm_model}"
         local_status["generation"] = "hosted"
     elif use_local_models:
@@ -421,9 +595,9 @@ def build_runtime_clients(
             local_status["generation"] = "configured"
             local_status["parser"] = "configured"
         elif settings.uses_mlx_profile:
-            generation = HostedGenerationClient(live_llm) if live_llm is not None else DeterministicGenerationClient()
-            generation_provider = f"hosted:{settings.llm_model}" if live_llm is not None else "fallback:deterministic"
-            local_status["generation"] = "hosted" if live_llm is not None else "heuristic"
+            generation = HostedGenerationClient(live_generation_llm) if live_generation_llm is not None else DeterministicGenerationClient()
+            generation_provider = f"hosted:{settings.llm_model}" if live_generation_llm is not None else "fallback:deterministic"
+            local_status["generation"] = "hosted" if live_generation_llm is not None else "heuristic"
             local_status["parser"] = "heuristic"
         else:
             generation = LocalStructuredGenerationClient(ensure_local_text_backend())
@@ -431,12 +605,12 @@ def build_runtime_clients(
             local_status["generation"] = "configured"
             local_status["parser"] = "configured"
     else:
-        generation = HostedGenerationClient(live_llm) if live_llm is not None else DeterministicGenerationClient()
-        generation_provider = f"hosted:{settings.llm_model}" if live_llm is not None else "fallback:deterministic"
-        local_status["generation"] = "hosted" if live_llm is not None else "heuristic"
+        generation = HostedGenerationClient(live_generation_llm) if live_generation_llm is not None else DeterministicGenerationClient()
+        generation_provider = f"hosted:{settings.llm_model}" if live_generation_llm is not None else "fallback:deterministic"
+        local_status["generation"] = "hosted" if live_generation_llm is not None else "heuristic"
         local_status["parser"] = "heuristic"
 
-    if settings.use_live_metadata_enrichment and live_llm is not None:
+    if settings.use_live_metadata_enrichment and live_openai_llm is not None:
         local_status["metadata"] = "hosted"
     elif use_local_models:
         if settings.uses_mlx_profile and (runtime_mode == RuntimeMode.LOCAL or is_local_component_ready(settings, "text")):

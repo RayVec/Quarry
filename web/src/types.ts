@@ -73,7 +73,6 @@ export interface ParsedSentence {
   paragraph_index: number;
   warnings: string[];
   raw_text: string;
-  disagreement_flagged: boolean;
 }
 
 export interface UIMessage {
@@ -110,9 +109,6 @@ export interface FeedbackState {
     char_end: number;
     comment_text: string;
     resolved: boolean;
-    sentence_index?: number | null;
-    sentence_type?: "claim" | "synthesis" | "structure" | null;
-    sentence_text?: string | null;
   }>;
   resolved_comments: Array<{
     comment_id: string;

@@ -79,6 +79,33 @@ def test_runtime_hosts_generation_while_leaving_decomposition_local(tmp_path: Pa
     assert runtime_profile.local_model_status["metadata"] == "heuristic"
 
 
+def test_runtime_uses_gemini_provider_for_hosted_generation(tmp_path: Path) -> None:
+    settings = Settings(
+        corpus_dir=tmp_path / "corpus",
+        artifacts_dir=tmp_path / "artifacts",
+        runtime_profile="apple_silicon",
+        runtime_mode="hybrid",
+        use_local_models=True,
+        use_live_generation=True,
+        use_live_decomposition=False,
+        use_live_metadata_enrichment=False,
+        llm_provider="gemini",
+        llm_api_key="gemini-test-key",
+        llm_model="gemini-3-flash-preview",
+    )
+    settings.corpus_dir.mkdir(parents=True, exist_ok=True)
+    settings.artifacts_dir.mkdir(parents=True, exist_ok=True)
+
+    decomposition, generation, *_rest, runtime_profile = build_runtime_clients(settings, {}, settings.artifacts_dir)
+
+    assert isinstance(generation, HostedGenerationClient)
+    assert generation.llm.__class__.__name__ == "GeminiLLM"
+    assert decomposition.__class__.__name__ == "HeuristicDecompositionClient"
+    assert runtime_profile.generation_provider == "hosted:gemini-3-flash-preview"
+    assert runtime_profile.local_model_status["generation"] == "hosted"
+    assert runtime_profile.local_model_status["decomposition"] == "heuristic"
+
+
 def test_prepare_backend_writes_live_corpus_progress_to_log(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.delenv("QUARRY_LOG_DIR", raising=False)
     monkeypatch.delenv("QUARRY_TEST_LOG_DIR", raising=False)

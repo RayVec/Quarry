@@ -85,6 +85,7 @@ Important config sections:
   - `mode = "hybrid" | "local" | "hosted"`
   - `profile = "apple_silicon" | "gpu"`
 - `[hosted]`
+  - `provider` (`openai_compatible` or `gemini`)
   - `llm_base_url`
   - `llm_api_key`
   - `llm_model`
@@ -117,6 +118,12 @@ That gives you:
 - local verification
 - local parsing
 - hosted answer generation / refinement / regeneration
+
+Gemini note:
+
+- `provider = "gemini"` currently applies to hosted generation only
+- decomposition and metadata enrichment remain on the existing OpenAI-compatible hosted path (or local/heuristic fallbacks)
+- for Gemini keys, QUARRY accepts either `hosted.llm_api_key` or environment variable `GEMINI_API_KEY`
 
 ## Runtime Modes
 
@@ -211,7 +218,9 @@ Conversation history is frontend-local and browser-persisted:
 The current UI keeps review actions but moves them into contextual surfaces:
 
 - paragraph-style reading flow with inline sentence interactions
-- inline disagreement flagging under individual sentences
+- text-selection-first comments: no persistent comment controls are visible until text is selected
+- a floating comment icon appears near the active selection and opens a compact side card
+- saved comments render as inline yellow annotation highlights; clicking a highlight opens comment edit/delete
 - citation drawer for quote context
 - displayed citation badges are renumbered contiguously (1..N) for readability, while internal citation IDs remain stable for review actions
 - expandable “Review and refine” panel
