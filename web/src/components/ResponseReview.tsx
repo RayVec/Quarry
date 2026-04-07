@@ -7,7 +7,12 @@ import {
   useState,
 } from "react";
 import { MessageSquare, ThumbsUp, ThumbsDown } from "lucide-react";
-import type { ParsedSentence, Reference, SessionState } from "../types";
+import type {
+  MatchQuality,
+  ParsedSentence,
+  Reference,
+  SessionState,
+} from "../types";
 import { buildDisplayCitationMap } from "../utils/citationDisplay";
 
 interface ResponseReviewProps {
@@ -59,15 +64,17 @@ function sentenceStatusNote(sentence: ParsedSentence) {
   return null;
 }
 
-function referenceTooltip(reference: Reference) {
-  const lines = [
-    reference.reference_quote,
-    reference.document_title,
-    reference.section_heading,
-  ]
-    .map((line) => line?.trim())
-    .filter((line): line is string => Boolean(line));
-  return lines.join("\n");
+function matchQualityTooltipLabel(quality: MatchQuality): string {
+  switch (quality) {
+    case "strong":
+      return "Good match";
+    case "partial":
+      return "Partial match";
+    case "none":
+      return "No match";
+    default:
+      return "No match";
+  }
 }
 
 function clampPosition(value: number, min: number, max: number) {
@@ -486,22 +493,21 @@ export function ResponseReview({
                       const feedback = citationFeedbackMap.get(
                         `${sentence.sentence_index}:${reference.citation_id}`,
                       );
-                      const feedbackClass = feedback ? `citation-feedback-${feedback}` : "";
-                      
+                      const tooltipQuote = reference.reference_quote?.trim() ?? "";
+                      const tooltipDoc =
+                        reference.document_title?.trim() || "—";
+                      const tooltipMatchLabel =
+                        matchQualityTooltipLabel(matchQuality);
+
                       return (
                         <button
-                          className={`citation-pill citation-pill--${matchQuality} ${reference.replacement_pending ? "replaced" : ""} ${feedbackClass} ${
+                          className={`citation-pill citation-pill--${matchQuality} ${reference.replacement_pending ? "replaced" : ""} ${
                             hasCommentOverlay
                               ? "tooltip-suppressed"
-                              : "hover-tooltip"
+                              : "citation-pill-tooltip-anchor"
                           }`}
                           data-testid={`citation-${sentence.sentence_index}-${reference.citation_id}`}
                           key={`${sentence.sentence_index}-${index}`}
-                          data-tooltip={
-                            hasCommentOverlay
-                              ? undefined
-                              : referenceTooltip(reference)
-                          }
                           onClick={() =>
                             onOpenCitation(
                               sentence,
@@ -516,6 +522,21 @@ export function ResponseReview({
                           ]
                           {feedback === "like" && <ThumbsUp size={12} style={{ marginLeft: "4px", display: "inline" }} aria-label="Liked" />}
                           {feedback === "dislike" && <ThumbsDown size={12} style={{ marginLeft: "4px", display: "inline" }} aria-label="Disliked" />}
+                          {!hasCommentOverlay ? (
+                            <span className="citation-pill-tooltip" role="tooltip">
+                              <span className="citation-pill-tooltip-quote">
+                                {tooltipQuote}
+                              </span>
+                              <hr className="citation-pill-tooltip-rule" />
+                              <span className="citation-pill-tooltip-doc">
+                                {tooltipDoc}
+                              </span>
+                              <hr className="citation-pill-tooltip-rule" />
+                              <span className="citation-pill-tooltip-match">
+                                {tooltipMatchLabel}
+                              </span>
+                            </span>
+                          ) : null}
                         </button>
                       );
                     })}

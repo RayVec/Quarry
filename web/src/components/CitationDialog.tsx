@@ -339,7 +339,7 @@ export function CitationDialog({
 
           <section className="drawer-section">
             <span className="tiny-label">Citation feedback</span>
-            <div className="drawer-action-row" style={{ gap: "8px" }}>
+            <div className="drawer-action-row drawer-action-row--space-evenly" style={{ gap: "8px" }}>
               <button
                 data-testid="like-citation"
                 className={currentFeedback === "like" ? "primary-button" : "ghost-button"}
