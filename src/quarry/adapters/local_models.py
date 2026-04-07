@@ -22,7 +22,7 @@ from quarry.adapters.in_memory import (
 from quarry.adapters.interfaces import DecompositionClient, EmbeddingClient, GenerationClient, MetadataEnricher, NLIClient, Reranker, Retriever
 from quarry.domain.models import ChunkObject, ConfidenceLabel, GenerationRequest, RetrievalFilters, RetrievedPassage, ScoredReference
 from quarry.logging_utils import elapsed_ms, logger_with_trace, timed
-from quarry.prompts import SHARED_SYSTEM_PROMPT, decomposition_classification_prompt, decomposition_prompt, generation_prompt, metadata_enrichment_prompt, parse_json_response
+from quarry.prompts import SHARED_SYSTEM_PROMPT, decomposition_prompt, generation_prompt, metadata_enrichment_prompt, parse_json_response
 
 
 logger = logger_with_trace(__name__)

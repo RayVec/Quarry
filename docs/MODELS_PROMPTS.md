@@ -49,7 +49,7 @@ Primary parser stack:
 
 - `allenai/olmOCR-7B-0725-FP8`
 - lightweight PDF text fallbacks by parser settings
-- `MinerU` remains installed and configurable for manual experiments, but it is not part of the default runtime path as of April 2, 2026
+- `MinerU` remains installed and configurable for manual experiments, but it is not part of the default fallback chain
 
 Intended use:
 
@@ -67,38 +67,39 @@ Possible models:
 
 Used for:
 
-- query classification when heuristics do not settle the answer
-- query decomposition into facets
-- metadata enrichment
+- query **decomposition into facets** (only when `QueryDecomposer` classifies the query as **multi-hop**; single-hop skips this call)
+- metadata enrichment (when not hosted)
 - local-only answer generation
 - local-only supplement generation
 - local-only refinement generation
 - local-only sentence regeneration
 
+Query **classification** (single-hop vs multi-hop) is **heuristic-only** in `QueryDecomposer`; this text model is not used for that step.
+
 ### 3.2 Local vision and parsing
 
 Primary Apple profile parser:
 
-- `mlx-community/Qwen3-VL-4B-Instruct-4bit`
+- `mlx-community/Qwen3-VL-4B-Instruct-4bit` (via the `qwen3_vl_mlx` / `mlx_vlm` adapter)
 
 Used for:
 
 - page-level PDF parsing
 - extracting headings, paragraphs, tables, and figure captions
-- this is the preferred and required PDF parser path for `apple_silicon`
+- when `runtime.profile = apple_silicon` and `use_local_models` is true, ingest **always** uses this MLX vision parser for the PDF primary chain; **`[parser] primary` in config does not switch the Apple PDF path** (that key applies on the GPU profile). The MLX fallback chain still uses `[parser] fallback` (for example `pymupdf_text`) after primary failures
 - ingest warms and checks this parser before parsing starts when local models are enabled
 - the prompt explicitly tells the model to ignore TOC pages, page headers, page footers, page numbers, and single-character heading fragments
 - when MLX parsing fails, the default lightweight fallbacks are `pymupdf_text` and then `pypdf_text`
 
-Heavier parser path:
+Heavier parser path (GPU / non-MLX profile):
 
-- `allenai/olmOCR-7B-0725-FP8`
+- `allenai/olmOCR-7B-0725-FP8` — typical default when `parser.primary = olmocr_transformers` in config (see `config.example.toml` and `Settings` defaults)
 
 Installed but not used by default:
 
 - `MinerU`
 - kept available for explicit/manual parser experiments only
-- not part of the default fallback chain as of April 2, 2026
+- not part of the default fallback chain
 
 Lightweight text-file parser:
 
@@ -187,12 +188,15 @@ Current config knobs:
 - `hosted.llm_api_key`
 - `hosted.llm_model`
 - `hosted.use_live_generation`
+- `hosted.use_live_decomposition` (OpenAI-compatible chat completions only; not Gemini)
+- `hosted.use_live_metadata_enrichment` (OpenAI-compatible only; not Gemini)
+- `hosted.use_live_embeddings` plus `hosted.embedding_base_url`, `hosted.embedding_api_key`, `hosted.embedding_model`, `hosted.embedding_dimensions` for optional hosted embedding during indexing/query (separate from the chat LLM)
 
 Provider-specific behavior:
 
-- `openai_compatible` uses `hosted.llm_base_url` + `hosted.llm_api_key`
-- `gemini` uses `hosted.llm_api_key` (or environment variable `GEMINI_API_KEY`)
-- Gemini support in this release is generation-only; decomposition and metadata-enrichment hosted paths remain OpenAI-compatible
+- `openai_compatible` uses `hosted.llm_base_url` + `hosted.llm_api_key` for chat-style tasks (generation, and optionally decomposition / metadata enrichment when the toggles above are on)
+- `gemini` uses `hosted.llm_api_key` (or environment variable `GEMINI_API_KEY`) for **generation only** (`use_live_generation`); the Google client prepends `SHARED_SYSTEM_PROMPT` into the same user-facing content via `with_shared_system_prompt` (no separate chat `system` role)
+- Hosted decomposition and metadata enrichment, when enabled, use the same OpenAI-compatible HTTP stack as generation (`OpenAICompatibleLLM`), not the Gemini client
 
 The recommended mixed strategy is:
 
@@ -206,38 +210,40 @@ The recommended mixed strategy is:
 
 In the recommended `hybrid + apple_silicon` setup, these usually stay local:
 
-- query classification
-- query decomposition
-- metadata enrichment
+- query classification (heuristic-only in `QueryDecomposer`; no model call)
+- query decomposition (local MLX or local transformers, unless `use_live_decomposition` is enabled)
+- metadata enrichment (local, unless `use_live_metadata_enrichment` is enabled)
 - PDF parsing
-- embeddings
+- embeddings (local, unless `use_live_embeddings` is enabled)
 - sparse retrieval
 - dense retrieval
 - reranking
 - NLI confidence scoring
 
-These can be hosted:
+These can be hosted (according to `hosted.*` toggles):
 
-- answer generation
+- answer generation (`use_live_generation`)
 - supplement generation
 - refinement generation
 - sentence regeneration
+- optionally: decomposition, metadata enrichment, embeddings (each has its own flag; decomposition/metadata require OpenAI-compatible credentials)
 
 ## 7. Prompted Tasks
 
 QUARRY currently uses prompt-driven model calls for:
 
-- query classification
-- query decomposition
+- query decomposition into facets (only when the heuristic classifier yields **multi-hop**; **single-hop** skips the decomposition model and uses the original query as the only facet)
 - metadata enrichment
 - answer generation
 - supplement generation
 - refinement generation
 - sentence regeneration
-- JSON repair for structured tasks
+- JSON repair for structured MLX outputs (decomposition and metadata enrichment on the MLX path)
 - MLX page parsing
 
-Not every query uses every prompt. Some stages now short-circuit heuristically before calling a model.
+**Not model-driven in current runtime:** query **classification** is handled only by heuristics in `QueryDecomposer` (see §9). There is no live call to `decomposition_classification_prompt`.
+
+Not every query uses every prompt. Some stages short-circuit heuristically before calling a model.
 
 ## 8. Shared System Prompt
 
@@ -252,24 +258,24 @@ It is defined in:
 
 - `src/quarry/prompts.py`
 
-It is used in two ways:
+It is used in several ways:
 
-- as the true system message for hosted OpenAI-compatible calls and local transformers chat-style calls
-- prepended directly into MLX task prompts, because the MLX path does not rely on a separate system-message channel
+- as the true `system` message for hosted **OpenAI-compatible** chat completions and local **transformers** chat-style calls
+- prepended into the **Gemini** request body via `with_shared_system_prompt(...)` (single contents string, not a separate API system role)
+- prepended directly into **MLX** task prompts, because the MLX path does not rely on a separate system-message channel
 
-## 9. Query Classification Prompt (Deprecated)
+## 9. Query Classification (Heuristic-Only) and Legacy Prompt
 
-**Note: As of the latest version, classification is handled entirely by heuristics. The classification model/prompt is no longer used.**
+**Runtime behavior:** `QueryDecomposer` in `src/quarry/pipeline/decomposition.py` classifies every query with **heuristics only** (`_heuristic_classify_query`). There is **no** call to a language model for classification.
 
-Previously used purpose:
+- Obvious multi-hop patterns (phrases, comma/`and` structure with certain openers) → `multi_hop`
+- Obvious single-hop patterns (prefixes such as “what is …”, metric hints without multi-clause structure) → `single_hop`
+- If neither pattern matches → default **`multi_hop`** with source logged as `heuristic_default_multi_hop`
+- The old third bucket **`clarification_required`** is not produced by this heuristic path (the prompt text in `decomposition_classification_prompt` still describes it for historical/tests only)
 
-- classify the query as `single_hop` or `multi_hop`
+**Legacy code:** `decomposition_classification_prompt(...)` remains in `src/quarry/prompts.py` and still documents JSON for `single_hop` | `multi_hop` | `clarification_required`, but **no production code invokes it** today (`DecompositionClient` only requires `decompose_query`). Tests may still import the function to pin prompt text.
 
-Current behavior:
-
-- Heuristic patterns in `decomposition.py` identify obvious single-hop and multi-hop queries
-- Queries that don't match any pattern default to `multi_hop`
-- MLX model is used only for facet generation, not classification
+**After classification:** for `multi_hop` only, the configured decomposition client runs **`decomposition_prompt`** (MLX, local transformers, hosted OpenAI-compatible, or heuristic fallback). For `single_hop`, the model decomposition step is skipped and the original query is used as the single facet.
 
 ## 10. Query Decomposition Prompt
 
@@ -351,7 +357,9 @@ The current prompt is intentionally context-first:
 
 This ordering is meant to help the model understand what it is answering before it sees output-format constraints.
 
-### 12.2 Sentence tags
+### 12.2 Paragraph markers and sentence tags
+
+The generator may insert **`[PARA]`** between topic shifts (formatting only; not a sentence tag and must not carry references). The prompt instructs grouping related sentences into paragraphs and using `[PARA]` when the topic changes.
 
 The generator can emit:
 
@@ -413,7 +421,7 @@ It tells the model:
 - to rewrite only that sentence
 - to use valid evidence from the supplied passages
 - to prefer a clear natural sentence over copied chunk openings, headings, or bullets
-- that shorter exact quotes of 8 to 10 words are allowed during sentence repair
+- that shorter exact quotes of **8 to 15 words** are allowed during sentence repair (see `generation_prompt` regeneration branch in `prompts.py`)
 - to use `[NO_REF]` if no passage supports the claim
 
 Current runtime policy after regeneration:
@@ -461,11 +469,11 @@ This wraps the normal generation prompt and adds a final repair instruction tell
 
 Code path:
 
-- `src/quarry/adapters/mlx_runtime.py`
+- `src/quarry/adapters/mlx_runtime.py` (`_json_repair_prompt` and callers)
 
 Purpose:
 
-- when a structured task returns invalid JSON, QUARRY gives the model one repair attempt
+- when an **MLX** structured task returns invalid JSON, QUARRY gives the model one repair attempt before falling back (for decomposition/metadata) or failing the parse path
 
 Repair instruction:
 
@@ -476,10 +484,12 @@ Repair instruction:
 
 This is used for:
 
-- classification
-- decomposition
-- metadata enrichment
-- MLX page block extraction
+- **query decomposition** (MLX): after `decomposition_prompt`, on parse failure
+- **metadata enrichment** (MLX): after `metadata_enrichment_prompt`, on parse failure
+
+It is **not** used for query classification in production (classification is heuristic-only). **Local transformers** decomposition and metadata paths (`LocalStructuredDecompositionClient`, `LocalStructuredMetadataEnricher`) call `parse_json_response` once and **fall back to heuristics** on failure without an automatic JSON-repair pass.
+
+MLX page parsing uses separate parsing/retry logic around `parse_mlx_page_blocks` / `render_parser_prompt`; it does not share the same `_json_repair_prompt` helper as decomposition.
 
 ## 16. MLX Page Parsing Prompt
 
@@ -520,10 +530,14 @@ Key rules:
 
 ### Hosted
 
-Hosted OpenAI-compatible calls:
+Hosted **OpenAI-compatible** calls:
 
-- use the shared system prompt as a true system message
+- use `SHARED_SYSTEM_PROMPT` as a true chat `system` message
 - send the task prompt as the user message
+
+Hosted **Gemini** generation:
+
+- pass a single string built with `with_shared_system_prompt(prompt)` into the Google GenAI `generate_content` call (system rules are inlined, not a separate role)
 
 ### Local transformers
 
@@ -536,9 +550,9 @@ Local transformers calls:
 
 MLX calls:
 
-- inline the shared system prompt directly into the task prompt
-- attempt one JSON repair when needed
-- may fall back to heuristic behavior in `hybrid`
+- inline the shared system prompt directly into the task prompt (`with_shared_system_prompt`)
+- attempt one JSON repair for **decomposition** and **metadata enrichment** when `parse_json_response` fails
+- may fall back to heuristic decomposition/metadata behavior in `hybrid` when the client provides a heuristic fallback
 
 ## 18. Runtime Status and Inspection
 
@@ -572,9 +586,10 @@ Warmup verifies readiness for:
 - embedding
 - reranker
 - NLI
-- text
+- text (shared backend with decomposition/generation readiness flags in the status file)
 - decomposition
 - generation
+- metadata enrichment
 - parser
 
-In `local` mode, startup enforces these readiness checks before the server is allowed to run.
+In `local` mode, startup enforces readiness checks for embedding, reranker, NLI, decomposition, generation, and parser (see `_ensure_runtime_ready` in `src/quarry/api/app.py`); the warmup run still records **metadata** and **text** in `local_model_status.json` for visibility.

@@ -17,7 +17,6 @@ from quarry.logging_utils import logger_with_trace
 from quarry.model_cache import resolve_cached_hf_snapshot_path
 from quarry.prompts import (
     SHARED_SYSTEM_PROMPT,
-    decomposition_classification_prompt,
     decomposition_prompt,
     generation_prompt,
     metadata_enrichment_prompt,

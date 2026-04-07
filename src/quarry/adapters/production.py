@@ -45,7 +45,6 @@ from quarry.logging_utils import elapsed_ms, logger_with_trace, timed
 from quarry.model_cache import configure_model_cache
 from quarry.prompts import (
     SHARED_SYSTEM_PROMPT,
-    decomposition_classification_prompt,
     decomposition_prompt,
     generation_prompt,
     metadata_enrichment_prompt,
