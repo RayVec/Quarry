@@ -1,7 +1,4 @@
-export type ResponseMode =
-  | "response_review"
-  | "clarification_required"
-  | "generation_failed";
+export type ResponseMode = "response_review" | "generation_failed";
 
 export type QueryType = "single_hop" | "multi_hop";
 export type QueryRunStatus = "running" | "completed" | "failed";
@@ -150,7 +147,6 @@ export interface SessionState {
   ui_messages: UIMessage[];
   removed_ungrounded_claim_count: number;
   response_mode: ResponseMode;
-  clarification_suggestions: string[];
   generation_provider: string;
   parser_provider: string;
   runtime_mode: RuntimeMode;

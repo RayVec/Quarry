@@ -15,13 +15,11 @@ The current system is optimized for:
 
 ### 2.1 Local corpus as source of truth
 
-The approved document set lives in:
-
-- `data/sources/`
+The approved document set lives under **`paths.corpus_dir`** in `config.toml` (often `data/sources/` in the example config). The `Settings` default before any file config is applied is `data/corpus/`.
 
 Generated artifacts live in:
 
-- `data/artifacts/`
+- **`paths.artifacts_dir`** (typically `data/artifacts/`)
 
 There is no database and no OpenSearch in the current implementation.
 
@@ -72,7 +70,7 @@ Review tools remain available, but they appear contextually inside the answer ex
 | `src/quarry/services/`        | query orchestration and session state                        |
 | `web/src/`                    | conversational review UI                                     |
 | `tests/`                      | unit, integration, and E2E tests                             |
-| `data/sources/`               | raw input documents                                          |
+| `data/sources/` (typical)     | raw input documents; actual path is `paths.corpus_dir`       |
 | `data/artifacts/`             | generated corpus artifacts                                   |
 | `data/model-cache/`           | project-local model cache                                    |
 | `data/logs/runtime/`          | query/API/runtime logs                                       |
@@ -106,12 +104,14 @@ The current design goal is best reliable answers, not “local everything” and
 
 The recommended mixed strategy is:
 
-- local decomposition
+- local decomposition (optional: `hosted.use_live_decomposition` with OpenAI-compatible credentials)
 - local retrieval
 - local reranking
-- local verification
+- local verification (DeBERTa MNLI when `use_local_models` is on; see section 7.7)
 - local parsing
-- hosted answer generation / refinement / regeneration
+- hosted answer generation / refinement / regeneration (`hosted.use_live_generation`; Gemini or OpenAI-compatible)
+
+Optional knobs also include hosted metadata enrichment and hosted embeddings (`hosted.use_live_metadata_enrichment`, `hosted.use_live_embeddings`). See `docs/MODELS_PROMPTS.md` for provider constraints (for example, Gemini is generation-only).
 
 This keeps trust-critical steps local while using a stronger hosted model for difficult synthesis.
 
@@ -151,7 +151,7 @@ Current startup flow:
 3. configure logging
 4. check warmup readiness
 5. optionally warm local models
-6. optionally rebuild corpus from `data/sources/`
+6. optionally rebuild corpus from the configured `paths.corpus_dir`
 7. start Uvicorn
 
 The launcher asks whether to rebuild the corpus. This keeps “serve now” and “refresh sources first” in one entrypoint.
@@ -172,7 +172,7 @@ Main modules:
 
 Raw source files:
 
-- `data/sources/`
+- directory configured as `paths.corpus_dir` (commonly `data/sources/`)
 
 Generated outputs:
 
@@ -192,19 +192,18 @@ Parsing depends on runtime profile.
 `apple_silicon`:
 
 - rasterize PDF pages locally
-- parse with `mlx-community/Qwen3-VL-4B-Instruct-4bit`
-- parser prompt now explicitly tells the model to ignore TOC pages, headers, footers, page numbers, and single-character heading fragments
+- parse with `mlx-community/Qwen3-VL-4B-Instruct-4bit` via the `qwen3_vl_mlx` adapter
+- parser prompt explicitly tells the model to ignore TOC pages, headers, footers, page numbers, and single-character heading fragments
 - normalize into structured blocks such as heading, paragraph, table, table title, and figure caption
-- when local models are enabled, QUARRY now tries this MLX parser first even in `hybrid` mode
+- when `use_local_models` is true, the ingest **primary** PDF chain is **always** this MLX vision parser (`build_parsing_pipeline` in `ingest/pipeline.py`); **`[parser] primary` does not select a different PDF engine on this profile** — that setting applies on the GPU profile. The **fallback** chain still honors `[parser] fallback` (for example `pymupdf_text`, then `pypdf_text`)
 - ingest ensures the parser is warmed before document parsing starts
-- the default PDF fallback chain is `pymupdf_text` and then `pypdf_text`
-- `MinerU` is still installed and configurable, but it is not used in the default runtime chain as of April 2, 2026
+- `MinerU` remains installed and configurable, but it is **not** in the default fallback chain
 - markdown and text files use `basic_text`
 - fallback usage is logged explicitly
 
 `gpu`:
 
-- prefer the heavier local parser stack, with lightweight PDF text fallbacks by default
+- PDF path is driven by `[parser] primary` / `[parser] fallback` (typical default: `olmocr_transformers` with `pymupdf_text` and lighter fallbacks — see `Settings` and `config.example.toml`)
 
 ### 6.2.1 Post-parse normalization
 
@@ -307,13 +306,9 @@ Current steps:
 - reranking
 - citation index construction
 
-The system now uses smaller retrieval budgets for obvious single-hop questions:
+For **single-hop** queries, `HybridRetriever._resolve_limits` caps retrieval at **12 / 12 / 8** (sparse / dense / rerank) by taking the **minimum** of those caps and the configured `sparse_top_k`, `dense_top_k`, and `rerank_top_k` (defaults in `Settings` are 30 / 30 / 20). Multi-hop queries use the full configured budgets.
 
-- sparse top-k: 12
-- dense top-k: 12
-- rerank top-k: 8
-
-This reduces latency and often improves precision by cutting noise.
+This reduces latency and often improves precision by cutting noise on narrow questions.
 
 ### 7.5 Generation
 
@@ -355,10 +350,10 @@ The trust model is:
 
 Default exact-match policy requires at least 10 words for a quoted anchor. Regenerated references can opt into a shorter minimum (currently 8 words) so sentence repair has more room to produce clear prose without losing exact-text verification.
 
-NLI confidence scoring follows exact-quote verification and assigns a `confidence_label` per reference:
+NLI confidence scoring follows exact-quote verification and assigns a `confidence_label` per reference. Wiring in `build_runtime_clients` (`production.py`):
 
-- **`HeuristicNLIClient`** (Apple Silicon / no-model path): computes token-set overlap as `max(precision, recall)` — where precision is `|sentence ∩ chunk| / |sentence|` and recall is `|sentence ∩ chunk| / |chunk|`. Taking the maximum of both directions means a sentence that is a near-verbatim paraphrase of the source (and thus has high recall) is not unfairly penalised when it contains a few additional connective words not present in the chunk. Thresholds: ≥ 0.7 → `supported`; ≥ 0.4 → `partially_supported`; else `not_supported`.
-- **`LocalMNLIClient`** (GPU / full-transformer path): runs an MNLI classifier and maps predicted class to label. An additional soft threshold (`ENTAILMENT_SOFT_THRESHOLD = 0.35`) upgrades a result to `supported` when the argmax lands on neutral but the raw entailment probability is still ≥ 0.35. This handles near-verbatim rewrites where the model splits probability mass between entailment and neutral without a clear winner.
+- **`LocalMNLIClient`** when **`use_local_models` is true** (default in `hybrid` / `local`): loads `khalidalt/DeBERTa-v3-large-mnli` (or `settings.nli_model_name`) via Transformers on the configured device — **both** `apple_silicon` and `gpu` profiles use this path when local models are enabled. It maps predicted class to label with a soft threshold (`ENTAILMENT_SOFT_THRESHOLD = 0.35`): if the argmax is `neutral` but the raw entailment probability is still ≥ 0.35, the label is upgraded to `supported`. If the model fails to load or scoring throws, the client falls back to **`NullConfidenceNLIClient`**, which returns `label=None` / `score=None` (verification still runs on exact quotes; semantic labels may be absent).
+- **`HeuristicNLIClient`** when **`use_local_models` is false**: token-set overlap as `max(precision, recall)` on token sets derived from sentence and chunk text. Thresholds: ≥ 0.7 → `supported`; ≥ 0.4 → `partially_supported`; else `not_supported`. This is **not** the default for typical laptop `hybrid` setups with local models on.
 
 ### 7.8 Regeneration
 
@@ -371,7 +366,8 @@ Important current optimizations:
 - regeneration halts early when the rewritten sentence is still ungrounded and too similar to the previous failed attempt
 - retry prompts now include the previous failed rewrite and explicitly instruct the model to find different evidence or use `[NO_REF]`
 - when regeneration cannot produce a grounded sentence, QUARRY falls back to a conservative `[NO_REF]` sentence shell instead of fabricating prose from raw chunk prefixes or bullet fragments
-- regeneration prompts explicitly prefer clear natural sentences and allow shorter verbatim quote anchors (8 to 10 words)
+- regeneration prompts explicitly prefer clear natural sentences and allow shorter verbatim quote anchors (**8 to 15 words** in `generation_prompt` for `regeneration` mode)
+- after a successful regeneration, post-regeneration verification sets `reference.minimum_quote_words` to **`REGENERATION_MIN_QUOTE_WORDS` (8)** so shorter anchors can still pass exact-match checks than the default 10-word minimum
 
 This avoids wasting time on repeated near-identical failed rewrites.
 
@@ -411,7 +407,7 @@ Important feedback fields:
 
 **Persistence:** The UI posts citation feedback to `POST /sessions/{session_id}/citations/{citation_id}/feedback` with `sentence_index` and `feedback_type`. Entries are stored in `feedback.citation_feedback` (scoped by sentence index so the same numeric `citation_id` in different sentences does not collide).
 
-**Refine gate (`PipelineService.refine`):** A hosted generation pass for refinement runs only when **at least one** of the following is true:
+**Refine gate (`PipelineService.refine`):** A **refinement generation** call (hosted or local, whichever `AnswerGenerator` is configured) runs only when **at least one** of the following is true:
 
 - there is at least one **unresolved** selection comment, or
 - there is at least one citation with **`dislike`** feedback.
@@ -557,10 +553,12 @@ Interaction contract:
 
 ### 10.3 UI modes
 
-The UI handles multiple response modes:
+The backend `ResponseMode` enum (`src/quarry/domain/models.py`) and the frontend `ResponseMode` type (`web/src/types.ts`) both expose only:
 
 - `response_review`
 - `generation_failed`
+
+`PipelineService._determine_response_mode` sets one of these two values on every completed session.
 
 ## 11. Logging and Observability
 

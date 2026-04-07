@@ -790,7 +790,6 @@ export default function App() {
                         handleDeleteSelectionComment(entry.id, session.session_id, commentId)
                       }
                       onRefine={handleRefine}
-                      onRunClarificationSuggestion={(suggestion) => void submitQuery(suggestion, { fresh: true })}
                     />
                   ),
                 )}

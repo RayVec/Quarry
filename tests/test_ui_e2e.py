@@ -221,18 +221,3 @@ def test_unified_refinement_flow(page: Page, web_server) -> None:
     expect(page.get_by_test_id("status-refinements")).to_have_text("Refinements: 1")
     close_diagnostics(page)
 
-
-def test_clarification_suggestions_can_rerun_query(page: Page, web_server) -> None:
-    page.goto(WEB_URL, wait_until="networkidle")
-    page.get_by_test_id("query-input").fill("schedule")
-    page.get_by_test_id("run-query").click()
-
-    expect(page.get_by_test_id("clarification-required")).to_be_visible(timeout=20000)
-    suggestion = page.locator("[data-testid^='clarification-suggestion-']").first
-    expect(suggestion).to_be_visible()
-    suggestion.click()
-
-    expect(page.locator("[data-testid^='citation-']").first).to_be_visible(timeout=20000)
-    open_diagnostics(page)
-    expect(page.get_by_test_id("status-mode")).to_contain_text("response_review")
-    close_diagnostics(page)
