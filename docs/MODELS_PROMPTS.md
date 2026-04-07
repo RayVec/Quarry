@@ -394,6 +394,15 @@ Refinement mode tells the model:
 - present conflicting evidence when needed
 - say so when evidence is insufficient
 
+**How citation dislike reaches this prompt (runtime wiring):**
+
+- Refinement generation only runs when there are unresolved selection comments and/or at least one **disliked** citation (see pipeline refine gate). **Likes are not injected into the prompt.**
+- For each refinement call, `mismatch_citation_ids` is set to the list of citation ids the reviewer **disliked**.
+- Source passages for the request **exclude** those disliked ids entirely, so their chunk text does not appear under **Source Passages**.
+- `## Reviewer Feedback` is built by `_format_reviewer_feedback`: for each id in `mismatch_citation_ids`, it emits a line that the citation was flagged as a mismatch (when the citation is no longer in the trimmed index, the line is generic; if it were still present, it would include section path and note).
+- Individual passage lines can be prefixed with `[MISMATCH: …]` via `_format_citation_line` when that passage’s id is in `mismatch_citation_ids` **and** the passage is still included — in the usual dislike path the passage is omitted instead, so the model mainly sees the textual feedback bullets plus the remaining passages.
+- Unresolved selection comments are also merged into **Reviewer Feedback** and into `disagreement_notes`-driven lines; refinement mode instructions additionally tell the model to treat selection comments as required edits when present.
+
 ### 12.5 Regeneration mode
 
 Regeneration mode is sentence-level repair.

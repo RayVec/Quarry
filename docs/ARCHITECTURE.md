@@ -393,14 +393,41 @@ The session also records how many ungrounded sentences were removed so the revie
 
 The same service object also handles review mutations:
 
-- add sentence-level or response-level review comments
+- add selection-anchored review comments
+- citation-level like / dislike / neutral feedback
+- citation replacement (alternative passage) from the citation drawer
 - unified refine orchestration
 
 The authoritative reviewer state lives in `SessionState.feedback`.
 
 Important feedback fields:
 
-- `comments` (sentence-bound or response-level)
+- `comments` — text selections with `char_start` / `char_end`, `text_selection`, `comment_text`, `resolved`
+- `citation_feedback` — per `(sentence_index, citation_id)` a `feedback_type` of `like`, `dislike`, or `neutral`
+- `citation_replacements` — records replacement chunk choices tied to a citation id (used with drawer replacement flows)
+- `resolved_comments` — selections that could not be re-anchored after a prior refine
+
+### 8.1 Citation like / dislike and how refine uses them
+
+**Persistence:** The UI posts citation feedback to `POST /sessions/{session_id}/citations/{citation_id}/feedback` with `sentence_index` and `feedback_type`. Entries are stored in `feedback.citation_feedback` (scoped by sentence index so the same numeric `citation_id` in different sentences does not collide).
+
+**Refine gate (`PipelineService.refine`):** A hosted generation pass for refinement runs only when **at least one** of the following is true:
+
+- there is at least one **unresolved** selection comment, or
+- there is at least one citation with **`dislike`** feedback.
+
+If the reviewer only left **`like`** feedback (and no unresolved comments), refine **does not** call the generator to rewrite the answer; it still performs post-refine bookkeeping (for example re-anchoring comments, clearing feedback state, bumping `refinement_count`).
+
+**Dislike → model input:**
+
+- Citations whose ids appear in **disliked** feedback are **removed** from the passage list passed into the refinement `GenerationRequest` (they are not included in `citation_index` for that call).
+- Those same ids are passed as `mismatch_citation_ids`. The generation prompt’s **Reviewer Feedback** section lists them as flagged mismatches (and passage lines that remain in the index can be prefixed with `[MISMATCH: …]` when the id is still present). Together with refinement mode instructions, this steers the model away from relying on those sources.
+
+**Like → model input:** **`like` is not passed into the refinement prompt.** The pipeline only counts likes for logging. Likes are useful for UI state (for example thumbs on citation badges) but do not currently add text to `GenerationRequest` or change which passages are included.
+
+**Related:** Choosing a replacement passage in the citation drawer updates `citation_index` (and may set `reviewer_note` / `replacement_pending` on the entry). Refine then uses the updated index when building source passages; that path is separate from the thumbs but composes with dislike-driven removal.
+
+Implementation reference: `PipelineService.refine`, `PipelineService.set_citation_feedback`, `prompts.generation_prompt`, `prompts._format_reviewer_feedback`, `prompts._format_citation_line`.
 
 ## 9. API Architecture
 
@@ -423,7 +450,7 @@ Important route groups:
 
 - query start and fetch
 - session fetch and close
-- feedback mutation
+- feedback mutation (selection comments, citation like/dislike, citation replacement / undo)
 - unified refine
 
 ## 10. Frontend Architecture
@@ -471,7 +498,8 @@ Current behavior:
 - removed-sentence warnings are surfaced to the reviewer in the message and review panel
 - older assistant messages remain visible but read-only
 - comment capture uses text selections (character ranges) instead of sentence-index or response-level freeform comments
-- refine input is selection-driven; response-level supplement comments are no longer a separate path
+- refine input is driven by **unresolved selection comments** and/or **disliked citations**; citation **likes** do not trigger a rewrite by themselves
+- response-level supplement comments are no longer a separate path
 - comment affordance is hidden by default; selecting text reveals a floating comment icon near the selection
 - comment composer/editing uses a compact floating card anchored near selection/highlight instead of in-flow expanding panels
 - citation tooltip display is suppressed while a selection icon/card is active to avoid interaction overlap

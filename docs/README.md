@@ -251,9 +251,12 @@ Raw `status` and `confidence_label` remain in diagnostics/session payloads for d
 The backend now exposes a unified review action model built around text selections:
 
 - selection comments with `text_selection`, `char_start`, `char_end`, and `comment_text`
+- citation-level **like / dislike / neutral** via `POST .../citations/{id}/feedback` (scoped by `sentence_index`)
 - citation replacement/undo actions from the citation drawer
-- single refine endpoint that applies selection comments and citation replacement decisions
+- single refine endpoint that applies selection comments and citation-driven refinement decisions
 - resolved comment tracking when a prior selection no longer anchors in the refined response
+
+**Refine and citation thumbs:** Running refine triggers a full-response regeneration only when there is at least one **unresolved selection comment** or at least one **disliked** citation. **Disliked** citations are dropped from the evidence shown to the model for that call and are listed in the prompt’s reviewer-feedback section as mismatches. **Likes** are stored for the UI and logs only; they are **not** passed into the refinement prompt. See `docs/ARCHITECTURE.md` (section 8.1) for the full pipeline description.
 
 ## Query Pipeline Highlights
 
