@@ -52,7 +52,11 @@ export interface Reference {
   matched_chunk_id?: string | null;
   verified: boolean;
   confidence_score?: number | null;
-  confidence_label?: "supported" | "partially_supported" | "not_supported" | null;
+  confidence_label?:
+    | "supported"
+    | "partially_supported"
+    | "not_supported"
+    | null;
   citation_id?: number | null;
   document_id?: string | null;
   document_title?: string | null;
@@ -119,7 +123,17 @@ export interface FeedbackState {
     created_at: string;
     resolved: boolean;
   }>;
-  citation_replacements: Array<{ citation_id: number; replacement_chunk_id: string }>;
+  citation_replacements: Array<{
+    citation_id: number;
+    replacement_chunk_id: string;
+  }>;
+  citation_feedback: Array<{
+    feedback_id: string;
+    sentence_index: number;
+    citation_id: number;
+    feedback_type: "like" | "dislike" | "neutral";
+    created_at: string;
+  }>;
 }
 
 export interface SessionState {

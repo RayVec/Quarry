@@ -5,6 +5,8 @@ from uuid import uuid4
 
 from quarry.adapters.interfaces import ChunkStore
 from quarry.domain.models import (
+    CitationFeedback,
+    CitationFeedbackType,
     CitationIndexEntry,
     CitationReplacement,
     CitationReplacementRequest,
@@ -405,6 +407,130 @@ class PipelineService:
         session.feedback.resolved_comments = [comment for comment in session.feedback.resolved_comments if comment.comment_id != comment_id]
         return self.session_store.save(session)
 
+    def set_citation_feedback(
+        self,
+        session_id: str,
+        sentence_index: int,
+        citation_id: int,
+        feedback_type: CitationFeedbackType,
+    ) -> SessionState:
+        session = self.session_store.get(session_id)
+        existing_feedback = next(
+            (
+                fb
+                for fb in session.feedback.citation_feedback
+                if fb.sentence_index == sentence_index and fb.citation_id == citation_id
+            ),
+            None
+        )
+        if existing_feedback:
+            if feedback_type == CitationFeedbackType.NEUTRAL:
+                session.feedback.citation_feedback = [
+                    fb
+                    for fb in session.feedback.citation_feedback
+                    if not (fb.sentence_index == sentence_index and fb.citation_id == citation_id)
+                ]
+            else:
+                existing_feedback.feedback_type = feedback_type
+        elif feedback_type != CitationFeedbackType.NEUTRAL:
+            session.feedback.citation_feedback.append(
+                CitationFeedback(
+                    sentence_index=sentence_index,
+                    citation_id=citation_id,
+                    feedback_type=feedback_type,
+                )
+            )
+        return self.session_store.save(session)
+
+    async def get_citation_alternatives(self, session_id: str, citation_id: int) -> ScopedRetrievalEnvelope:
+        session = self.session_store.get(session_id)
+        target_citation = next((entry for entry in session.citation_index if entry.citation_id == citation_id), None)
+        if target_citation is None:
+            return ScopedRetrievalEnvelope(citations=[])
+        
+        sentence = None
+        for parsed_sentence in session.parsed_sentences:
+            sentence_citation_ids = [ref.citation_id for ref in parsed_sentence.references if ref.citation_id is not None]
+            if citation_id in sentence_citation_ids:
+                sentence = parsed_sentence
+                break
+        
+        facets = [sentence.sentence_text] if sentence and sentence.sentence_text.strip() else session.facets
+        passages, _diagnostics = await self.hybrid_retriever.retrieve(
+            original_query=session.original_query,
+            facets=facets or session.facets,
+            query_type=session.query_type,
+        )
+        
+        alternative_citations = build_citation_index(
+            passages,
+            starting_id=max((entry.citation_id for entry in session.citation_index), default=0) + 1,
+            ambiguity_gap_threshold=self.ambiguity_gap_threshold,
+        )
+        
+        existing_chunk_ids = {entry.chunk_id for entry in session.citation_index}
+        filtered = [entry for entry in alternative_citations if entry.chunk_id not in existing_chunk_ids][: self.scoped_top_k]
+        
+        if filtered:
+            return ScopedRetrievalEnvelope(citations=filtered)
+        
+        fallback_candidates = [
+            chunk
+            for chunk in self.chunk_store.all_chunks()
+            if chunk.chunk_id not in existing_chunk_ids and chunk.chunk_id != target_citation.chunk_id
+        ][: self.scoped_top_k]
+        
+        fallback = [
+            CitationIndexEntry(
+                citation_id=max((entry.citation_id for entry in session.citation_index), default=0) + index + 1,
+                chunk_id=chunk.chunk_id,
+                text=chunk.text,
+                document_id=chunk.document_id,
+                document_title=chunk.document_title,
+                section_heading=chunk.section_heading,
+                section_path=chunk.section_path,
+                page_number=chunk.page_start,
+                page_end=chunk.page_end,
+                retrieval_score=0.0,
+                source_facet="alternative_fallback",
+            )
+            for index, chunk in enumerate(fallback_candidates)
+        ]
+        return ScopedRetrievalEnvelope(citations=fallback)
+
+    def replace_with_alternative(
+        self,
+        session_id: str,
+        sentence_index: int,
+        citation_id: int,
+        replacement_citation_id: int,
+    ) -> SessionState:
+        session = self.session_store.get(session_id)
+        target = next((entry for entry in session.citation_index if entry.citation_id == citation_id), None)
+        replacement = next((entry for entry in session.citation_index if entry.citation_id == replacement_citation_id), None)
+        
+        if target is None or replacement is None:
+            return self.session_store.save(session)
+        
+        target.chunk_id = replacement.chunk_id
+        target.text = replacement.text
+        target.document_id = replacement.document_id
+        target.document_title = replacement.document_title
+        target.section_heading = replacement.section_heading
+        target.section_path = replacement.section_path
+        target.page_number = replacement.page_number
+        target.page_end = replacement.page_end
+        target.replacement_pending = True
+        target.reviewer_note = "Replaced via citation feedback."
+        
+        session.feedback.citation_feedback = [
+            fb
+            for fb in session.feedback.citation_feedback
+            if not (fb.sentence_index == sentence_index and fb.citation_id == citation_id)
+        ]
+        
+        return self.session_store.save(session)
+
     async def scoped_retrieval(self, session_id: str, sentence_index: int, citation_id: int) -> ScopedRetrievalEnvelope:
         session = self.session_store.get(session_id)
         if sentence_index < 0 or sentence_index >= len(session.parsed_sentences):
@@ -517,6 +643,18 @@ class PipelineService:
         session = self.session_store.get(session_id)
         prior_response = session.generated_response
         working_citations = list(session.citation_index)
+        
+        disliked_citation_ids = [
+            fb.citation_id 
+            for fb in session.feedback.citation_feedback 
+            if fb.feedback_type == CitationFeedbackType.DISLIKE
+        ]
+        liked_citation_ids = [
+            fb.citation_id 
+            for fb in session.feedback.citation_feedback 
+            if fb.feedback_type == CitationFeedbackType.LIKE
+        ]
+        
         selection_comments = [comment for comment in session.feedback.comments if not comment.resolved]
         logger.info(
             "refinement started",
@@ -524,20 +662,27 @@ class PipelineService:
                 "session_id": session_id,
                 "comment_count": len(session.feedback.comments),
                 "sentence_comment_count": len(selection_comments),
+                "disliked_citations": len(disliked_citation_ids),
+                "liked_citations": len(liked_citation_ids),
             },
         )
         try:
             step2_rewrites = 0
             step2_rewrites = 0
-            if selection_comments:
+            if selection_comments or disliked_citation_ids:
                 comment_lines = [
                     f'Selected "{comment.text_selection}": {comment.comment_text}'
                     for comment in selection_comments
                 ]
+                
+                citations_for_refinement = [
+                    c for c in working_citations if c.citation_id not in disliked_citation_ids
+                ]
+                
                 refine_request = GenerationRequest(
                     original_query=session.original_query,
                     facets=session.facets,
-                    citation_index=self._trim_citations_to_budget(working_citations),
+                    citation_index=self._trim_citations_to_budget(citations_for_refinement),
                     mode="refinement",
                     existing_response=render_parsed_sentences(session.parsed_sentences),
                     selection_comments=[
@@ -545,6 +690,7 @@ class PipelineService:
                     ],
                     disagreement_notes=comment_lines,
                     disagreement_contexts=[],
+                    mismatch_citation_ids=disliked_citation_ids,
                 )
                 self._check_refinement_prompt_budget(refine_request, session.parsed_sentences)
                 refined_raw = await self._generate_with_retry(refine_request)

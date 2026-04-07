@@ -1,12 +1,23 @@
-import { startTransition, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { MessageSquare } from "lucide-react";
+import {
+  startTransition,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import { MessageSquare, ThumbsUp, ThumbsDown } from "lucide-react";
 import type { ParsedSentence, Reference, SessionState } from "../types";
 import { buildDisplayCitationMap } from "../utils/citationDisplay";
 
 interface ResponseReviewProps {
   session: SessionState;
   readOnly: boolean;
-  onOpenCitation: (sentence: ParsedSentence, citationId: number, referenceQuote: string) => void;
+  onOpenCitation: (
+    sentence: ParsedSentence,
+    citationId: number,
+    referenceQuote: string,
+  ) => void;
   onSaveComment: (selection: {
     text_selection: string;
     char_start: number;
@@ -21,9 +32,9 @@ type SelectionDraft = {
   text: string;
   start: number;
   end: number;
-  rect: DOMRect;       // bounding rect of the first line (used for popup anchor)
-  spanTop: number;     // viewport top of the entire selection
-  spanBottom: number;  // viewport bottom of the entire selection
+  rect: DOMRect; // bounding rect of the first line (used for popup anchor)
+  spanTop: number; // viewport top of the entire selection
+  spanBottom: number; // viewport bottom of the entire selection
 };
 
 type CommentIndicator = {
@@ -39,14 +50,21 @@ type PopupState = {
 };
 
 function sentenceStatusNote(sentence: ParsedSentence) {
-  if (sentence.sentence_type === "synthesis" && sentence.status === "ungrounded") {
+  if (
+    sentence.sentence_type === "synthesis" &&
+    sentence.status === "ungrounded"
+  ) {
     return "This synthesis could not be fully verified. The reasoning may be valid, but QUARRY could not link it to exact source text.";
   }
   return null;
 }
 
 function referenceTooltip(reference: Reference) {
-  const lines = [reference.reference_quote, reference.document_title, reference.section_heading]
+  const lines = [
+    reference.reference_quote,
+    reference.document_title,
+    reference.section_heading,
+  ]
     .map((line) => line?.trim())
     .filter((line): line is string => Boolean(line));
   return lines.join("\n");
@@ -66,15 +84,33 @@ export function ResponseReview({
 }: ResponseReviewProps) {
   const contentRef = useRef<HTMLDivElement | null>(null);
   const popupRef = useRef<HTMLDivElement | null>(null);
-  const [selectionDraft, setSelectionDraft] = useState<SelectionDraft | null>(null);
+  const [selectionDraft, setSelectionDraft] = useState<SelectionDraft | null>(
+    null,
+  );
   const [popupState, setPopupState] = useState<PopupState | null>(null);
+  
+  const citationFeedbackMap = useMemo(() => {
+    const map = new Map<string, "like" | "dislike" | "neutral">();
+    session.feedback.citation_feedback?.forEach((fb) => {
+      map.set(`${fb.sentence_index}:${fb.citation_id}`, fb.feedback_type);
+    });
+    return map;
+  }, [session.feedback.citation_feedback]);
   const [draftNote, setDraftNote] = useState("");
   const [editNotes, setEditNotes] = useState<Record<string, string>>({});
-  const [commentIndicators, setCommentIndicators] = useState<CommentIndicator[]>([]);
+  const [commentIndicators, setCommentIndicators] = useState<
+    CommentIndicator[]
+  >([]);
 
-  const displayCitationMap = useMemo(() => buildDisplayCitationMap(session), [session]);
+  const displayCitationMap = useMemo(
+    () => buildDisplayCitationMap(session),
+    [session],
+  );
   const visibleSentences = useMemo(
-    () => (session.parsed_sentences ?? []).filter((sentence) => sentence.sentence_text.trim().length > 0),
+    () =>
+      (session.parsed_sentences ?? []).filter(
+        (sentence) => sentence.sentence_text.trim().length > 0,
+      ),
     [session.parsed_sentences],
   );
   const paragraphs = useMemo(() => {
@@ -100,7 +136,10 @@ export function ResponseReview({
   }, [visibleSentences]);
 
   const comments = session.feedback.comments ?? [];
-  const commentsById = useMemo(() => new Map(comments.map((comment) => [comment.comment_id, comment])), [comments]);
+  const commentsById = useMemo(
+    () => new Map(comments.map((comment) => [comment.comment_id, comment])),
+    [comments],
+  );
   const hasCommentOverlay = Boolean(selectionDraft || popupState);
 
   // Measure annotation highlight positions to render margin indicators (Google Docs style)
@@ -114,13 +153,15 @@ export function ResponseReview({
     const containerRect = container.getBoundingClientRect();
     const seen = new Map<string, CommentIndicator>();
 
-    const highlights = container.querySelectorAll<HTMLElement>('[data-comment-id]');
+    const highlights =
+      container.querySelectorAll<HTMLElement>("[data-comment-id]");
     for (const el of highlights) {
-      const ids = (el.dataset.commentId ?? '').split(',').filter(Boolean);
+      const ids = (el.dataset.commentId ?? "").split(",").filter(Boolean);
       for (const id of ids) {
         if (seen.has(id)) continue;
         const rect = el.getBoundingClientRect();
-        const top = rect.top - containerRect.top + container.scrollTop + rect.height / 2;
+        const top =
+          rect.top - containerRect.top + container.scrollTop + rect.height / 2;
         seen.set(id, { commentId: id, commentIds: ids, top });
       }
     }
@@ -131,14 +172,14 @@ export function ResponseReview({
   useEffect(() => {
     function handleMouseDown(event: MouseEvent) {
       const target = event.target as Node;
-      
+
       // Never dismiss if clicking inside the popup card
       if (popupRef.current?.contains(target)) return;
-      
+
       // If click starts inside the text content area, let handleMouseUp decide
       // whether to keep or replace the draft — don't clear prematurely
       if (contentRef.current?.contains(target)) return;
-      
+
       // Click outside both popup and content → dismiss everything
       setPopupState(null);
       setSelectionDraft(null);
@@ -154,9 +195,15 @@ export function ResponseReview({
     // (e.g. clicking the textarea) — they bubble up and would clear the draft
     if (popupRef.current?.contains(event.target as Node)) return;
     // Ignore clicks on the comment trigger button — let its onClick handle the transition
-    if ((event.target as HTMLElement).closest?.('[data-testid="selection-comment-trigger"]')) return;
+    if (
+      (event.target as HTMLElement).closest?.(
+        '[data-testid="selection-comment-trigger"]',
+      )
+    )
+      return;
     // Ignore clicks on comment margin indicators — they open existing comments
-    if ((event.target as HTMLElement).closest?.('.comment-margin-indicator')) return;
+    if ((event.target as HTMLElement).closest?.(".comment-margin-indicator"))
+      return;
 
     const selected = window.getSelection();
     if (!selected || selected.rangeCount === 0 || selected.isCollapsed) {
@@ -177,22 +224,33 @@ export function ResponseReview({
     }
 
     // Robust matching: strip citations like [1] and normalize whitespace
-    const cleanSelected = selectedText.replace(/\[\d+\]/g, "").replace(/\s+/g, " ").trim();
+    const cleanSelected = selectedText
+      .replace(/\[\d+\]/g, "")
+      .replace(/\s+/g, " ")
+      .trim();
     if (!cleanSelected) return; // Should not trigger for just selecting brackets or spaces
-    
+
     // Use the same coordinate space as sentenceRanges: concatenated sentence_text
     // joined by single-space separators. This avoids the mismatch with
     // generated_response which may include citation markers, paragraph breaks, etc.
-    const sentenceConcatenated = visibleSentences.map((s) => s.sentence_text).join(" ");
+    const sentenceConcatenated = visibleSentences
+      .map((s) => s.sentence_text)
+      .join(" ");
     const start = sentenceConcatenated.indexOf(cleanSelected);
-    
+
     const rect = range.getBoundingClientRect();
     if (!rect.width && !rect.height) return;
 
     // Use getClientRects() to get the true vertical span across all lines
-    const clientRects = Array.from(range.getClientRects()).filter((r) => r.width > 0 && r.height > 0);
-    const spanTop = clientRects.length ? Math.min(...clientRects.map((r) => r.top)) : rect.top;
-    const spanBottom = clientRects.length ? Math.max(...clientRects.map((r) => r.bottom)) : rect.bottom;
+    const clientRects = Array.from(range.getClientRects()).filter(
+      (r) => r.width > 0 && r.height > 0,
+    );
+    const spanTop = clientRects.length
+      ? Math.min(...clientRects.map((r) => r.top))
+      : rect.top;
+    const spanBottom = clientRects.length
+      ? Math.max(...clientRects.map((r) => r.bottom))
+      : rect.bottom;
 
     setSelectionDraft({
       text: cleanSelected || selectedText,
@@ -233,14 +291,20 @@ export function ResponseReview({
     if (popupState.mode === "new" && selectionDraft) {
       // Card replaces the trigger button — same gutter position
       const left = containerRect.width - size / 2 - 8;
-      const selectionMidpoint = (selectionDraft.spanTop + selectionDraft.spanBottom) / 2;
-      const top = selectionMidpoint - containerRect.top + contentRef.current.scrollTop - size / 2;
+      const selectionMidpoint =
+        (selectionDraft.spanTop + selectionDraft.spanBottom) / 2;
+      const top =
+        selectionMidpoint -
+        containerRect.top +
+        contentRef.current.scrollTop -
+        size / 2;
       return { left, top };
     }
 
     // "existing" mode: position near the clicked annotation highlight (convert to container coords)
     const left = containerRect.width - size / 2 - 8;
-    const top = popupState.rect.top - containerRect.top + contentRef.current.scrollTop;
+    const top =
+      popupState.rect.top - containerRect.top + contentRef.current.scrollTop;
     return { left, top };
   }, [popupState, selectionDraft]);
 
@@ -257,27 +321,40 @@ export function ResponseReview({
     // Vertical: true center across ALL selected lines, relative to the container
     // spanTop/spanBottom are viewport coords; containerRect.top is also viewport
     // contentRef.current.scrollTop handles any scrolling inside the container
-    const selectionMidpoint = (selectionDraft.spanTop + selectionDraft.spanBottom) / 2;
-    const top = selectionMidpoint - containerRect.top + contentRef.current.scrollTop - size / 2;
+    const selectionMidpoint =
+      (selectionDraft.spanTop + selectionDraft.spanBottom) / 2;
+    const top =
+      selectionMidpoint -
+      containerRect.top +
+      contentRef.current.scrollTop -
+      size / 2;
 
     return { left, top };
   }, [selectionDraft]);
 
   return (
     <section className="response-review">
-      <div className="response-reading-flow" onMouseUp={handleMouseUp} ref={contentRef}>
+      <div
+        className="response-reading-flow"
+        onMouseUp={handleMouseUp}
+        ref={contentRef}
+      >
         {!paragraphs.length ? (
           <div className="response-empty-state">
             <span className="tiny-label">No verified answer to show</span>
             <p>
-              I couldn't prepare a grounded response from the current evidence. You can try a narrower question or ask
-              QUARRY to try again with different feedback.
+              I couldn't prepare a grounded response from the current evidence.
+              You can try a narrower question or ask QUARRY to try again with
+              different feedback.
             </p>
           </div>
         ) : null}
 
         {paragraphs.map(([paragraphIndex, paragraphSentences]) => (
-          <div className="response-paragraph" key={`paragraph-${paragraphIndex}`}>
+          <div
+            className="response-paragraph"
+            key={`paragraph-${paragraphIndex}`}
+          >
             {paragraphSentences.map((sentence) => {
               const matchQuality = sentence.match_quality ?? "none";
               const range = sentenceRanges.get(sentence.sentence_index);
@@ -285,27 +362,43 @@ export function ResponseReview({
               const sentenceEnd = range?.end ?? sentenceStart;
 
               const overlapping = comments
-                .filter((comment) => comment.char_start < sentenceEnd && comment.char_end > sentenceStart)
+                .filter(
+                  (comment) =>
+                    comment.char_start < sentenceEnd &&
+                    comment.char_end > sentenceStart,
+                )
                 .map((comment) => ({
                   id: comment.comment_id,
                   start: Math.max(0, comment.char_start - sentenceStart),
-                  end: Math.min(sentence.sentence_text.length, comment.char_end - sentenceStart),
+                  end: Math.min(
+                    sentence.sentence_text.length,
+                    comment.char_end - sentenceStart,
+                  ),
                 }))
                 .filter((segment) => segment.end > segment.start);
 
               // Draft selection highlight: when the comment popup is open, render the
               // selected text range as a DOM-based highlight so it persists even after
               // focus moves to the textarea (native ::selection disappears on blur).
-              const hasDraftHighlight = popupState?.mode === "new" && selectionDraft &&
-                selectionDraft.start < sentenceEnd && selectionDraft.end > sentenceStart;
+              const hasDraftHighlight =
+                popupState?.mode === "new" &&
+                selectionDraft &&
+                selectionDraft.start < sentenceEnd &&
+                selectionDraft.end > sentenceStart;
               const draftLocalStart = hasDraftHighlight
                 ? Math.max(0, selectionDraft!.start - sentenceStart)
                 : 0;
               const draftLocalEnd = hasDraftHighlight
-                ? Math.min(sentence.sentence_text.length, selectionDraft!.end - sentenceStart)
+                ? Math.min(
+                    sentence.sentence_text.length,
+                    selectionDraft!.end - sentenceStart,
+                  )
                 : 0;
 
-              const boundaries = new Set<number>([0, sentence.sentence_text.length]);
+              const boundaries = new Set<number>([
+                0,
+                sentence.sentence_text.length,
+              ]);
               for (const segment of overlapping) {
                 boundaries.add(segment.start);
                 boundaries.add(segment.end);
@@ -317,16 +410,29 @@ export function ResponseReview({
               const boundaryList = [...boundaries].sort((a, b) => a - b);
 
               return (
-                <div className="response-inline-sentence" data-testid={`sentence-${sentence.sentence_index}`} key={sentence.sentence_index}>
+                <div
+                  className="response-inline-sentence"
+                  data-testid={`sentence-${sentence.sentence_index}`}
+                  key={sentence.sentence_index}
+                >
                   <span className="response-inline-sentence-text">
                     {boundaryList.slice(0, -1).map((segmentStart, i) => {
                       const segmentEnd = boundaryList[i + 1];
-                      const segmentText = sentence.sentence_text.slice(segmentStart, segmentEnd);
+                      const segmentText = sentence.sentence_text.slice(
+                        segmentStart,
+                        segmentEnd,
+                      );
                       const globalStart = sentenceStart + segmentStart;
                       const segmentCommentIds = comments
-                        .filter((comment) => comment.char_start < globalStart + segmentText.length && comment.char_end > globalStart)
+                        .filter(
+                          (comment) =>
+                            comment.char_start <
+                              globalStart + segmentText.length &&
+                            comment.char_end > globalStart,
+                        )
                         .map((comment) => comment.comment_id);
-                      const inDraft = hasDraftHighlight &&
+                      const inDraft =
+                        hasDraftHighlight &&
                         draftLocalEnd > draftLocalStart &&
                         segmentStart >= draftLocalStart &&
                         segmentStart < draftLocalEnd;
@@ -334,7 +440,9 @@ export function ResponseReview({
                         return (
                           <span
                             key={`${sentence.sentence_index}-seg-${i}`}
-                            className={inDraft ? "draft-selection-highlight" : undefined}
+                            className={
+                              inDraft ? "draft-selection-highlight" : undefined
+                            }
                           >
                             {segmentText}
                           </span>
@@ -345,16 +453,26 @@ export function ResponseReview({
                           key={`${sentence.sentence_index}-seg-${i}`}
                           className={`annotation-highlight${inDraft ? " draft-selection-highlight" : ""}`}
                           data-testid={`annotation-highlight-${sentence.sentence_index}-${i}`}
-                          data-comment-id={segmentCommentIds.join(',')}
+                          data-comment-id={segmentCommentIds.join(",")}
                           role="button"
                           tabIndex={0}
                           onClick={(event) =>
-                            openExistingPopup(segmentCommentIds, (event.currentTarget as HTMLElement).getBoundingClientRect())
+                            openExistingPopup(
+                              segmentCommentIds,
+                              (
+                                event.currentTarget as HTMLElement
+                              ).getBoundingClientRect(),
+                            )
                           }
                           onKeyDown={(event) => {
-                            if (event.key === 'Enter' || event.key === ' ') {
+                            if (event.key === "Enter" || event.key === " ") {
                               event.preventDefault();
-                              openExistingPopup(segmentCommentIds, (event.currentTarget as HTMLElement).getBoundingClientRect());
+                              openExistingPopup(
+                                segmentCommentIds,
+                                (
+                                  event.currentTarget as HTMLElement
+                                ).getBoundingClientRect(),
+                              );
                             }
                           }}
                         >
@@ -362,25 +480,52 @@ export function ResponseReview({
                         </span>
                       );
                     })}{" "}
-                    {sentence.references.map((reference, index) =>
-                      reference.citation_id && matchQuality !== "none" ? (
+                    {sentence.references.map((reference, index) => {
+                      if (!reference.citation_id || matchQuality === "none") return null;
+                      
+                      const feedback = citationFeedbackMap.get(
+                        `${sentence.sentence_index}:${reference.citation_id}`,
+                      );
+                      const feedbackClass = feedback ? `citation-feedback-${feedback}` : "";
+                      
+                      return (
                         <button
-                          className={`citation-pill citation-pill--${matchQuality} ${reference.replacement_pending ? "replaced" : ""} ${
-                            hasCommentOverlay ? "tooltip-suppressed" : "hover-tooltip"
+                          className={`citation-pill citation-pill--${matchQuality} ${reference.replacement_pending ? "replaced" : ""} ${feedbackClass} ${
+                            hasCommentOverlay
+                              ? "tooltip-suppressed"
+                              : "hover-tooltip"
                           }`}
                           data-testid={`citation-${sentence.sentence_index}-${reference.citation_id}`}
                           key={`${sentence.sentence_index}-${index}`}
-                          data-tooltip={hasCommentOverlay ? undefined : referenceTooltip(reference)}
-                          onClick={() => onOpenCitation(sentence, reference.citation_id!, reference.reference_quote)}
+                          data-tooltip={
+                            hasCommentOverlay
+                              ? undefined
+                              : referenceTooltip(reference)
+                          }
+                          onClick={() =>
+                            onOpenCitation(
+                              sentence,
+                              reference.citation_id!,
+                              reference.reference_quote,
+                            )
+                          }
                         >
-                          [{displayCitationMap.get(reference.citation_id) ?? reference.citation_id}]
+                          [
+                          {displayCitationMap.get(reference.citation_id) ??
+                            reference.citation_id}
+                          ]
+                          {feedback === "like" && <ThumbsUp size={12} style={{ marginLeft: "4px", display: "inline" }} aria-label="Liked" />}
+                          {feedback === "dislike" && <ThumbsDown size={12} style={{ marginLeft: "4px", display: "inline" }} aria-label="Disliked" />}
                         </button>
-                      ) : null,
-                    )}
+                      );
+                    })}
                   </span>
 
                   {sentenceStatusNote(sentence) ? (
-                    <p className="sentence-status-note" data-testid={`sentence-note-${sentence.sentence_index}`}>
+                    <p
+                      className="sentence-status-note"
+                      data-testid={`sentence-note-${sentence.sentence_index}`}
+                    >
                       {sentenceStatusNote(sentence)}
                     </p>
                   ) : null}
@@ -394,10 +539,18 @@ export function ResponseReview({
           <button
             className="selection-comment-trigger"
             data-testid="selection-comment-trigger"
-            style={{ left: `${triggerPosition.left}px`, top: `${triggerPosition.top}px`, position: 'absolute' }}
+            style={{
+              left: `${triggerPosition.left}px`,
+              top: `${triggerPosition.top}px`,
+              position: "absolute",
+            }}
             onMouseDown={(e) => e.preventDefault()}
             onClick={() => {
-              setPopupState({ mode: "new", rect: selectionDraft.rect, commentIds: [] });
+              setPopupState({
+                mode: "new",
+                rect: selectionDraft.rect,
+                commentIds: [],
+              });
               // Clear native selection — the DOM-based draft highlight takes over
               window.getSelection()?.removeAllRanges();
             }}
@@ -417,7 +570,11 @@ export function ResponseReview({
               key={`comment-indicator-${indicator.commentId}`}
               className="comment-margin-indicator"
               data-testid={`comment-indicator-${indicator.commentId}`}
-              style={{ left: `${left}px`, top: `${indicator.top - 10}px`, position: 'absolute' }}
+              style={{
+                left: `${left}px`,
+                top: `${indicator.top - 10}px`,
+                position: "absolute",
+              }}
               onMouseDown={(e) => e.preventDefault()}
               onClick={(e) => {
                 openExistingPopup(
@@ -436,11 +593,18 @@ export function ResponseReview({
             className="selection-comment-card"
             data-testid="selection-comment-card"
             ref={popupRef}
-            style={{ left: `${popupPosition.left}px`, top: `${popupPosition.top}px`, position: 'absolute' }}
+            style={{
+              left: `${popupPosition.left}px`,
+              top: `${popupPosition.top}px`,
+              position: "absolute",
+            }}
             onMouseDown={(e) => e.preventDefault()}
           >
             {popupState.mode === "new" && selectionDraft ? (
-              <div className="selection-comment-compose" data-testid="selection-comment-editor">
+              <div
+                className="selection-comment-compose"
+                data-testid="selection-comment-editor"
+              >
                 <textarea
                   autoFocus
                   data-testid="selection-comment-input"
@@ -474,7 +638,10 @@ export function ResponseReview({
             ) : null}
 
             {popupState.mode === "existing" ? (
-              <div className="selection-comment-thread" data-testid="selection-comment-active-editor">
+              <div
+                className="selection-comment-thread"
+                data-testid="selection-comment-active-editor"
+              >
                 {popupState.commentIds.map((commentId) => {
                   const comment = commentsById.get(commentId);
                   if (!comment) return null;
@@ -499,8 +666,11 @@ export function ResponseReview({
                             await onDeleteComment(commentId);
                             startTransition(() => {
                               setPopupState((current) => {
-                                if (!current || current.mode !== "existing") return current;
-                                const nextIds = current.commentIds.filter((id) => id !== commentId);
+                                if (!current || current.mode !== "existing")
+                                  return current;
+                                const nextIds = current.commentIds.filter(
+                                  (id) => id !== commentId,
+                                );
                                 if (!nextIds.length) return null;
                                 return { ...current, commentIds: nextIds };
                               });

@@ -5,6 +5,8 @@ import asyncio
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 
 from quarry.domain.models import (
+    CitationFeedbackRequest,
+    CitationReplaceRequest,
     CitationReplacementRequest,
     QueryRequest,
     ReviewCommentRequest,
@@ -141,6 +143,56 @@ async def replace_citation(
 ) -> SessionEnvelope:
     try:
         session = service.replace_citation(session_id, payload.sentence_index, citation_id, payload)
+    except SessionNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Session not found.") from exc
+    return SessionEnvelope(session=session)
+
+
+@router.post("/sessions/{session_id}/citations/{citation_id}/feedback", response_model=SessionEnvelope)
+async def set_citation_feedback(
+    session_id: str,
+    citation_id: int,
+    payload: CitationFeedbackRequest,
+    service: PipelineService = Depends(get_service),
+) -> SessionEnvelope:
+    try:
+        session = service.set_citation_feedback(
+            session_id,
+            payload.sentence_index,
+            citation_id,
+            payload.feedback_type,
+        )
+    except SessionNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Session not found.") from exc
+    return SessionEnvelope(session=session)
+
+
+@router.get("/sessions/{session_id}/citations/{citation_id}/alternatives", response_model=ScopedRetrievalEnvelope)
+async def get_citation_alternatives(
+    session_id: str,
+    citation_id: int,
+    service: PipelineService = Depends(get_service),
+) -> ScopedRetrievalEnvelope:
+    try:
+        return await service.get_citation_alternatives(session_id, citation_id)
+    except SessionNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Session not found.") from exc
+
+
+@router.put("/sessions/{session_id}/citations/{citation_id}/replace", response_model=SessionEnvelope)
+async def replace_with_alternative(
+    session_id: str,
+    citation_id: int,
+    payload: CitationReplaceRequest,
+    service: PipelineService = Depends(get_service),
+) -> SessionEnvelope:
+    try:
+        session = service.replace_with_alternative(
+            session_id,
+            payload.sentence_index,
+            citation_id,
+            payload.replacement_citation_id,
+        )
     except SessionNotFoundError as exc:
         raise HTTPException(status_code=404, detail="Session not found.") from exc
     return SessionEnvelope(session=session)

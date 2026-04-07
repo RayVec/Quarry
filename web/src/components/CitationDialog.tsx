@@ -6,7 +6,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { Check, Minus, X } from "lucide-react";
+import { Check, Minus, ThumbsUp, ThumbsDown, X } from "lucide-react";
 import { api } from "../api";
 import type { CitationIndexEntry, Reference, SessionState } from "../types";
 import { buildDisplayCitationMap } from "../utils/citationDisplay";
@@ -17,7 +17,11 @@ const MATCH_QUALITY_ICON_SIZE = 18;
 const MATCH_QUALITY_ICON_STROKE = 2.3;
 
 function MatchQualityIcon({ level }: { level: MatchQuality }) {
-  const common = { size: MATCH_QUALITY_ICON_SIZE, strokeWidth: MATCH_QUALITY_ICON_STROKE, "aria-hidden": true as const };
+  const common = {
+    size: MATCH_QUALITY_ICON_SIZE,
+    strokeWidth: MATCH_QUALITY_ICON_STROKE,
+    "aria-hidden": true as const,
+  };
   switch (level) {
     case "strong":
       return <Check {...common} />;
@@ -83,7 +87,9 @@ function CitationQuotePanel({
         className={`quoted-passage-viewport ${expanded ? "quoted-passage-viewport--expanded" : ""}`}
       >
         <div ref={measureRef}>
-          <p className="quoted-passage">{highlightReference(text, referenceQuote)}</p>
+          <p className="quoted-passage">
+            {highlightReference(text, referenceQuote)}
+          </p>
         </div>
       </div>
       {needsToggle ? (
@@ -110,9 +116,19 @@ export function CitationDialog({
   onClose,
   onSessionUpdate,
 }: CitationDialogProps) {
-  const [scopedResults, setScopedResults] = useState<CitationIndexEntry[]>([]);
-  const [loadingMore, setLoadingMore] = useState(false);
-  const [mismatchNote, setMismatchNote] = useState("");
+  const drawerStackRef = useRef<HTMLDivElement>(null);
+  const [showAlternativesSection, setShowAlternativesSection] = useState(false);
+  const [alternatives, setAlternatives] = useState<CitationIndexEntry[]>([]);
+  const [loadingAlternatives, setLoadingAlternatives] = useState(false);
+  const [expandedAlternatives, setExpandedAlternatives] = useState<Set<number>>(new Set());
+  
+  const currentFeedback = useMemo(() => {
+    const feedback = session.feedback.citation_feedback?.find(
+      (fb) =>
+        fb.sentence_index === sentenceIndex && fb.citation_id === citation.citation_id
+    );
+    return feedback?.feedback_type ?? "neutral";
+  }, [session.feedback.citation_feedback, sentenceIndex, citation.citation_id]);
   const displayCitationMap = useMemo(
     () => buildDisplayCitationMap(session),
     [session],
@@ -158,13 +174,15 @@ export function CitationDialog({
       return {
         level,
         headline: "Partial match",
-        detail: "This passage is grounded, but you may want to inspect the source context.",
+        detail:
+          "This passage is grounded, but you may want to inspect the source context.",
       };
     }
     return {
       level,
       headline: "No citation expected",
-      detail: "This sentence is structural or inferential, so no citation badge is shown in the response.",
+      detail:
+        "This sentence is structural or inferential, so no citation badge is shown in the response.",
     };
   }, [sourceSentence?.match_quality]);
 
@@ -173,59 +191,77 @@ export function CitationDialog({
     return () => unlockBodyScroll();
   }, []);
 
-  async function handleLoadMore() {
-    setLoadingMore(true);
-    try {
-      const response = await api.scopedRetrieval(
-        session.session_id,
-        sentenceIndex,
-        citation.citation_id,
-      );
-      startTransition(() => {
-        setScopedResults(response.citations);
-      });
-    } finally {
-      setLoadingMore(false);
+  useEffect(() => {
+    if (!(currentFeedback === "dislike" && showAlternativesSection)) {
+      return;
     }
-  }
+    const stack = drawerStackRef.current;
+    if (!stack) {
+      return;
+    }
+    stack.scrollTop = stack.scrollHeight;
+  }, [currentFeedback, showAlternativesSection]);
 
-  async function handleReplace(replacementChunkId: string) {
-    const response = await api.replaceCitation(
+  async function handleFeedback(feedbackType: "like" | "dislike") {
+    const newFeedbackType = currentFeedback === feedbackType ? "neutral" : feedbackType;
+    const response = await api.setCitationFeedback(
       session.session_id,
       sentenceIndex,
       citation.citation_id,
-      replacementChunkId,
+      newFeedbackType
     );
     startTransition(() => {
       onSessionUpdate(response.session);
-      onClose();
     });
+    
+    if (newFeedbackType === "dislike") {
+      setShowAlternativesSection(true);
+      setAlternatives([]);
+    } else {
+      setShowAlternativesSection(false);
+      setAlternatives([]);
+    }
   }
 
-  async function handleMismatch() {
-    const response = await api.addComment(
-      session.session_id,
-      {
-        text_selection: referenceQuote || sourceSentence?.sentence_text || "",
-        char_start: 0,
-        char_end: Math.max((referenceQuote || sourceSentence?.sentence_text || "").length, 1),
-        comment_text: mismatchNote || "Citation does not support this sentence.",
-      },
-    );
-    startTransition(() => {
-      onSessionUpdate(response.session);
-      setMismatchNote("");
-    });
+  async function handleLoadAlternatives() {
+    setLoadingAlternatives(true);
+    try {
+      const altResponse = await api.getCitationAlternatives(
+        session.session_id,
+        citation.citation_id
+      );
+      setAlternatives(altResponse.citations.slice(0, 3));
+    } catch (error) {
+      console.error("Failed to load alternatives:", error);
+    } finally {
+      setLoadingAlternatives(false);
+    }
   }
 
-  async function handleUndoReplacement() {
-    const response = await api.undoReplacement(
+  async function handleReplaceWithAlternative(replacementCitationId: number) {
+    const response = await api.replaceWithAlternative(
       session.session_id,
+      sentenceIndex,
       citation.citation_id,
+      replacementCitationId
     );
     startTransition(() => {
       onSessionUpdate(response.session);
+      setShowAlternativesSection(false);
+      setAlternatives([]);
       onClose();
+    });
+  }
+
+  function toggleExpandAlternative(citationId: number) {
+    setExpandedAlternatives(prev => {
+      const next = new Set(prev);
+      if (next.has(citationId)) {
+        next.delete(citationId);
+      } else {
+        next.add(citationId);
+      }
+      return next;
     });
   }
 
@@ -251,7 +287,7 @@ export function CitationDialog({
           </button>
         </div>
 
-        <div className="drawer-stack">
+        <div ref={drawerStackRef} className="drawer-stack">
           <section className="drawer-section">
             <span className="tiny-label">Reference quote in context</span>
             <CitationQuotePanel
@@ -265,13 +301,16 @@ export function CitationDialog({
             <div className="citation-drawer-doc-page-column">
               <section className="drawer-section citation-drawer-info-card">
                 <span className="tiny-label">Document</span>
-                <p className="citation-drawer-info-value">{citation.document_title}</p>
+                <p className="citation-drawer-info-value">
+                  {citation.document_title}
+                </p>
               </section>
 
               <section className="drawer-section citation-drawer-info-card">
                 <span className="tiny-label">Page</span>
                 <p className="citation-drawer-info-value">
-                  {citation.page_end != null && citation.page_end !== citation.page_number
+                  {citation.page_end != null &&
+                  citation.page_end !== citation.page_number
                     ? `${citation.page_number}-${citation.page_end}`
                     : `${citation.page_number}`}
                 </p>
@@ -287,78 +326,110 @@ export function CitationDialog({
                   <span className="retrieval-strength-icon">
                     <MatchQualityIcon level={matchQuality.level} />
                   </span>
-                  <p className="retrieval-strength-headline">{matchQuality.headline}</p>
+                  <p className="retrieval-strength-headline">
+                    {matchQuality.headline}
+                  </p>
                 </div>
-                <p className="retrieval-strength-detail">{matchQuality.detail}</p>
+                <p className="retrieval-strength-detail">
+                  {matchQuality.detail}
+                </p>
               </div>
             </section>
           </div>
 
           <section className="drawer-section">
-            <div className="drawer-action-row">
+            <span className="tiny-label">Citation feedback</span>
+            <div className="drawer-action-row" style={{ gap: "8px" }}>
               <button
-                data-testid="show-more-citations"
-                className="ghost-button"
-                disabled={readOnly || loadingMore}
-                onClick={handleLoadMore}
+                data-testid="like-citation"
+                className={currentFeedback === "like" ? "primary-button" : "ghost-button"}
+                disabled={readOnly || loadingAlternatives}
+                onClick={() => handleFeedback("like")}
+                style={{ display: "flex", alignItems: "center", gap: "6px" }}
               >
-                {loadingMore ? "Searching nearby passages..." : "Show me more"}
+                <ThumbsUp size={16} aria-hidden />
+                {currentFeedback === "like" ? "Liked" : "Like"}
               </button>
-              {citation.replacement_pending ? (
+              <button
+                data-testid="dislike-citation"
+                className={currentFeedback === "dislike" ? "primary-button" : "ghost-button"}
+                disabled={readOnly || loadingAlternatives}
+                onClick={() => handleFeedback("dislike")}
+                style={{ display: "flex", alignItems: "center", gap: "6px" }}
+              >
+                <ThumbsDown size={16} aria-hidden />
+                {currentFeedback === "dislike" ? "Disliked" : "Dislike"}
+              </button>
+            </div>
+          </section>
+
+          {currentFeedback === "dislike" && showAlternativesSection && (
+            <section className="drawer-section" style={{ backgroundColor: "#f9fafb", padding: "16px", borderRadius: "8px" }}>
+              <span className="tiny-label" style={{ marginBottom: "8px", display: "block" }}>
+                You can select similar passages to replace
+              </span>
+              
+              {alternatives.length === 0 ? (
                 <button
-                  data-testid="undo-citation-replacement"
-                  className="ghost-button"
-                  disabled={readOnly}
-                  onClick={handleUndoReplacement}
+                  data-testid="load-alternatives"
+                  className="primary-button"
+                  disabled={readOnly || loadingAlternatives}
+                  onClick={handleLoadAlternatives}
+                  style={{ width: "100%" }}
                 >
-                  Undo replacement
+                  {loadingAlternatives ? "Searching..." : "Show me similar passages"}
                 </button>
-              ) : null}
-            </div>
-          </section>
-
-          <section className="drawer-section">
-            <span className="tiny-label">Mark as mismatch</span>
-            <textarea
-              data-testid="mismatch-note"
-              placeholder="Optional note for why this citation does not support the sentence."
-              value={mismatchNote}
-              onChange={(event) => setMismatchNote(event.target.value)}
-              disabled={readOnly}
-            />
-            <div className="drawer-action-row">
-              <button
-                data-testid="save-mismatch"
-                className="primary-button subtle"
-                disabled={readOnly}
-                onClick={handleMismatch}
-              >
-                Save mismatch
-              </button>
-            </div>
-          </section>
-
-          {scopedResults.length ? (
-            <section className="drawer-section">
-              <span className="tiny-label">Alternative passages</span>
-              <div className="candidate-list">
-                {scopedResults.map((candidate) => (
-                  <article className="candidate-item" key={candidate.chunk_id}>
-                    <p>{candidate.text}</p>
-                    <button
-                      data-testid={`replace-citation-${candidate.chunk_id}`}
-                      className="ghost-button"
-                      disabled={readOnly}
-                      onClick={() => handleReplace(candidate.chunk_id)}
-                    >
-                      Replace with this passage
-                    </button>
-                  </article>
-                ))}
-              </div>
+              ) : (
+                <div className="candidate-list">
+                  {alternatives.map((alt) => {
+                    const isExpanded = expandedAlternatives.has(alt.citation_id);
+                    return (
+                      <article 
+                        className="candidate-item" 
+                        key={alt.citation_id}
+                        style={{ marginBottom: "16px" }}
+                      >
+                        <div style={{ marginBottom: "8px", fontSize: "0.875rem", color: "#666" }}>
+                          <strong>{alt.document_title}</strong>
+                          {alt.section_heading && <span> • {alt.section_heading}</span>}
+                          <span> (Page {alt.page_number})</span>
+                        </div>
+                        <p 
+                          style={{ 
+                            display: "-webkit-box",
+                            WebkitLineClamp: isExpanded ? "unset" : 6,
+                            WebkitBoxOrient: "vertical",
+                            overflow: "hidden",
+                            marginBottom: "12px",
+                            lineHeight: "1.5"
+                          }}
+                        >
+                          {alt.text}
+                        </p>
+                        <div style={{ display: "flex", gap: "8px" }}>
+                          <button
+                            data-testid={`expand-alternative-${alt.citation_id}`}
+                            className="ghost-button citation-alt-action-button"
+                            onClick={() => toggleExpandAlternative(alt.citation_id)}
+                          >
+                            {isExpanded ? "Show less" : "Show more"}
+                          </button>
+                          <button
+                            data-testid={`replace-with-alternative-${alt.citation_id}`}
+                            className="primary-button subtle citation-alt-action-button"
+                            disabled={readOnly}
+                            onClick={() => handleReplaceWithAlternative(alt.citation_id)}
+                          >
+                            Replace with this passage
+                          </button>
+                        </div>
+                      </article>
+                    );
+                  })}
+                </div>
+              )}
             </section>
-          ) : null}
-
+          )}
         </div>
       </aside>
     </div>

@@ -31,6 +31,12 @@ class SentenceStatus(str, Enum):
     UNCHECKED = "unchecked"
 
 
+class CitationFeedbackType(str, Enum):
+    LIKE = "like"
+    DISLIKE = "dislike"
+    NEUTRAL = "neutral"
+
+
 class MatchQuality(str, Enum):
     STRONG = "strong"
     PARTIAL = "partial"
@@ -222,10 +228,19 @@ class ClaimDisagreement(BaseModel):
     reviewer_note: str | None = None
     contradicting_passages: list[str] | None = None
 
+class CitationFeedback(BaseModel):
+    feedback_id: str = Field(default_factory=lambda: str(uuid4()))
+    sentence_index: int = -1
+    citation_id: int
+    feedback_type: CitationFeedbackType
+    created_at: datetime = Field(default_factory=utc_now)
+
+
 class FeedbackState(BaseModel):
     comments: list[ReviewComment] = Field(default_factory=list)
     resolved_comments: list[SelectionCommentEdit] = Field(default_factory=list)
     citation_replacements: list[CitationReplacement] = Field(default_factory=list)
+    citation_feedback: list[CitationFeedback] = Field(default_factory=list)
 
 
 class UIMessage(BaseModel):
@@ -344,6 +359,16 @@ class ReviewCommentUpdateRequest(BaseModel):
 class CitationReplacementRequest(BaseModel):
     sentence_index: int
     replacement_chunk_id: str = Field(min_length=1)
+
+
+class CitationFeedbackRequest(BaseModel):
+    sentence_index: int
+    feedback_type: CitationFeedbackType
+
+
+class CitationReplaceRequest(BaseModel):
+    sentence_index: int
+    replacement_citation_id: int
 
 
 class ScopedRetrievalEnvelope(BaseModel):

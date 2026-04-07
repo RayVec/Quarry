@@ -50,17 +50,27 @@ export const api = {
     });
   },
   updateComment(sessionId: string, commentId: string, commentText: string) {
-    return request<SessionEnvelope>(`/sessions/${sessionId}/comments/${commentId}`, {
-      method: "PATCH",
-      body: JSON.stringify({ comment_text: commentText }),
-    });
+    return request<SessionEnvelope>(
+      `/sessions/${sessionId}/comments/${commentId}`,
+      {
+        method: "PATCH",
+        body: JSON.stringify({ comment_text: commentText }),
+      },
+    );
   },
   deleteComment(sessionId: string, commentId: string) {
-    return request<SessionEnvelope>(`/sessions/${sessionId}/comments/${commentId}`, {
-      method: "DELETE",
-    });
+    return request<SessionEnvelope>(
+      `/sessions/${sessionId}/comments/${commentId}`,
+      {
+        method: "DELETE",
+      },
+    );
   },
-  scopedRetrieval(sessionId: string, sentenceIndex: number, citationId: number) {
+  scopedRetrieval(
+    sessionId: string,
+    sentenceIndex: number,
+    citationId: number,
+  ) {
     return request<{ citations: CitationIndexEntry[] }>(
       `/sessions/${sessionId}/citations/${citationId}/scoped`,
       {
@@ -75,20 +85,64 @@ export const api = {
     citationId: number,
     replacementChunkId: string,
   ) {
-    return request<SessionEnvelope>(`/sessions/${sessionId}/citations/${citationId}/replace`, {
-      method: "POST",
-      body: JSON.stringify({
-        sentence_index: sentenceIndex,
-        replacement_chunk_id: replacementChunkId,
-      }),
-    });
+    return request<SessionEnvelope>(
+      `/sessions/${sessionId}/citations/${citationId}/replace`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          sentence_index: sentenceIndex,
+          replacement_chunk_id: replacementChunkId,
+        }),
+      },
+    );
   },
   undoReplacement(sessionId: string, citationId: number) {
-    return request<SessionEnvelope>(`/sessions/${sessionId}/citations/${citationId}/undo`, {
-      method: "POST",
-    });
+    return request<SessionEnvelope>(
+      `/sessions/${sessionId}/citations/${citationId}/undo`,
+      {
+        method: "POST",
+      },
+    );
+  },
+  setCitationFeedback(
+    sessionId: string,
+    sentenceIndex: number,
+    citationId: number,
+    feedbackType: "like" | "dislike" | "neutral",
+  ) {
+    return request<SessionEnvelope>(
+      `/sessions/${sessionId}/citations/${citationId}/feedback`,
+      {
+        method: "POST",
+        body: JSON.stringify({ sentence_index: sentenceIndex, feedback_type: feedbackType }),
+      },
+    );
+  },
+  getCitationAlternatives(sessionId: string, citationId: number) {
+    return request<{ citations: CitationIndexEntry[] }>(
+      `/sessions/${sessionId}/citations/${citationId}/alternatives`,
+    );
+  },
+  replaceWithAlternative(
+    sessionId: string,
+    sentenceIndex: number,
+    citationId: number,
+    replacementCitationId: number,
+  ) {
+    return request<SessionEnvelope>(
+      `/sessions/${sessionId}/citations/${citationId}/replace`,
+      {
+        method: "PUT",
+        body: JSON.stringify({
+          sentence_index: sentenceIndex,
+          replacement_citation_id: replacementCitationId,
+        }),
+      },
+    );
   },
   refine(sessionId: string) {
-    return request<SessionEnvelope>(`/sessions/${sessionId}/refine`, { method: "POST" });
+    return request<SessionEnvelope>(`/sessions/${sessionId}/refine`, {
+      method: "POST",
+    });
   },
 };

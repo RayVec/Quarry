@@ -12,11 +12,14 @@ from quarry.adapters.in_memory import (
 from quarry.domain.models import (
     ChunkObject,
     ConfidenceLabel,
+    CitationFeedbackType,
+    FeedbackState,
     MatchQuality,
     QueryProgressStage,
     QueryRequest,
     QueryRunStatus,
     RetrievedPassage,
+    SessionState,
 )
 from quarry.pipeline.decomposition import QueryDecomposer
 from quarry.pipeline.generation import AnswerGenerator, SentenceRegenerator
@@ -670,3 +673,53 @@ def test_single_hop_generation_request_uses_trimmed_citation_budget() -> None:
     assert len(generator.requests) == 1
     assert len(generator.requests[0].citation_index) == 8
     assert len(session.citation_index) == 12
+
+
+def test_citation_feedback_is_scoped_to_sentence_index() -> None:
+    chunk_store = InMemoryChunkStore(build_chunks())
+    session_store = SessionStore()
+    service = PipelineService(
+        chunk_store=chunk_store,
+        query_decomposer=QueryDecomposer(HeuristicDecompositionClient(), max_facets=4),
+        hybrid_retriever=HybridRetriever(
+            sparse_retriever=KeywordSparseRetriever(chunk_store),
+            dense_retriever=SemanticDenseRetriever(chunk_store),
+            reranker=SimpleCrossEncoderReranker(),
+            sparse_top_k=30,
+            dense_top_k=30,
+            rerank_top_k=20,
+            rrf_k=60,
+        ),
+        answer_generator=AnswerGenerator(DeterministicGenerationClient()),
+        sentence_regenerator=SentenceRegenerator(),
+        verifier=VerificationService(chunk_store=chunk_store, nli_client=HeuristicNLIClient()),
+        session_store=session_store,
+        scoped_top_k=3,
+        refinement_token_budget=8000,
+        ambiguity_gap_threshold=0.05,
+    )
+    session_store.save(
+        SessionState(
+            session_id="scope-feedback",
+            original_query="test",
+            feedback=FeedbackState(),
+        )
+    )
+
+    service.set_citation_feedback("scope-feedback", 0, 7, CitationFeedbackType.LIKE)
+    updated = service.set_citation_feedback("scope-feedback", 1, 7, CitationFeedbackType.DISLIKE)
+
+    assert len(updated.feedback.citation_feedback) == 2
+    assert {
+        (fb.sentence_index, fb.citation_id, fb.feedback_type.value)
+        for fb in updated.feedback.citation_feedback
+    } == {
+        (0, 7, "like"),
+        (1, 7, "dislike"),
+    }
+
+    cleared = service.set_citation_feedback("scope-feedback", 0, 7, CitationFeedbackType.NEUTRAL)
+    assert {
+        (fb.sentence_index, fb.citation_id, fb.feedback_type.value)
+        for fb in cleared.feedback.citation_feedback
+    } == {(1, 7, "dislike")}
