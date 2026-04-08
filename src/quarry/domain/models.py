@@ -228,6 +228,11 @@ class ClaimDisagreement(BaseModel):
     reviewer_note: str | None = None
     contradicting_passages: list[str] | None = None
 
+class SentenceCitationPair(BaseModel):
+    sentence_index: int
+    citation_id: int
+
+
 class CitationFeedback(BaseModel):
     feedback_id: str = Field(default_factory=lambda: str(uuid4()))
     sentence_index: int = -1
@@ -329,6 +334,8 @@ class GenerationRequest(BaseModel):
     disagreement_notes: list[str] = Field(default_factory=list)
     disagreement_contexts: list[str] = Field(default_factory=list)
     selection_comments: list[ReviewComment] = Field(default_factory=list)
+    approved_pairs: list[SentenceCitationPair] = Field(default_factory=list)
+    rejected_pairs: list[SentenceCitationPair] = Field(default_factory=list)
     failed_sentence_text: str | None = None
     failed_sentence_comment: str | None = None
     failed_regeneration_response: str | None = None

@@ -18,6 +18,7 @@ from quarry.domain.models import (
     QueryProgressStage,
     QueryRequest,
     QueryRunStatus,
+    ReviewCommentRequest,
     RetrievedPassage,
     SessionState,
 )
@@ -51,6 +52,17 @@ class CapturingGenerationClient:
 
     async def generate(self, request):
         self.requests.append(request)
+        quote = request.citation_index[0].text
+        return f'[CLAIM] {quote} [REF: "{quote}"]'
+
+class PassThroughRefineGenerationClient:
+    def __init__(self) -> None:
+        self.requests = []
+
+    async def generate(self, request):
+        self.requests.append(request)
+        if request.mode == "refinement" and request.existing_response:
+            return request.existing_response
         quote = request.citation_index[0].text
         return f'[CLAIM] {quote} [REF: "{quote}"]'
 
@@ -723,3 +735,93 @@ def test_citation_feedback_is_scoped_to_sentence_index() -> None:
         (fb.sentence_index, fb.citation_id, fb.feedback_type.value)
         for fb in cleared.feedback.citation_feedback
     } == {(1, 7, "dislike")}
+
+
+def test_refine_is_noop_when_only_likes_exist() -> None:
+    chunk = build_regeneration_chunk()
+    chunk_store = InMemoryChunkStore([chunk])
+    retriever = StaticHybridRetriever(
+        [RetrievedPassage(chunk=chunk, score=0.9, source_facet="What is PDRI maturity?", rank=1, retriever="reranked")]
+    )
+    generator = PassThroughRefineGenerationClient()
+    service = PipelineService(
+        chunk_store=chunk_store,
+        query_decomposer=QueryDecomposer(HeuristicDecompositionClient(), max_facets=4),
+        hybrid_retriever=retriever,
+        answer_generator=AnswerGenerator(generator),
+        sentence_regenerator=SentenceRegenerator(),
+        verifier=VerificationService(chunk_store=chunk_store, nli_client=HeuristicNLIClient()),
+        session_store=SessionStore(),
+        scoped_top_k=3,
+        refinement_token_budget=8000,
+        ambiguity_gap_threshold=0.05,
+    )
+
+    session = asyncio.run(service.run_query(QueryRequest(query="What is PDRI maturity?")))
+    original_refinement_count = session.refinement_count
+    original_response = session.generated_response
+    original_feedback_count = len(session.feedback.citation_feedback)
+    first_reference = session.parsed_sentences[0].references[0]
+    session = service.set_citation_feedback(
+        session.session_id,
+        session.parsed_sentences[0].sentence_index,
+        first_reference.citation_id or 1,
+        CitationFeedbackType.LIKE,
+    )
+
+    refined = asyncio.run(service.refine(session.session_id))
+
+    assert refined.generated_response == original_response
+    assert refined.refinement_count == original_refinement_count
+    assert len(refined.feedback.citation_feedback) == original_feedback_count + 1
+    assert len([request for request in generator.requests if request.mode == "refinement"]) == 0
+
+
+def test_refine_request_uses_pair_scoped_feedback_with_dislike_precedence() -> None:
+    chunks = build_many_chunks(12)
+    chunk_store = InMemoryChunkStore(chunks)
+    retriever = StaticHybridRetriever(
+        [
+            RetrievedPassage(chunk=chunk, score=float(200 - index), source_facet="facet", rank=index + 1, retriever="reranked")
+            for index, chunk in enumerate(chunks)
+        ]
+    )
+    generator = PassThroughRefineGenerationClient()
+    service = PipelineService(
+        chunk_store=chunk_store,
+        query_decomposer=QueryDecomposer(HeuristicDecompositionClient(), max_facets=4),
+        hybrid_retriever=retriever,
+        answer_generator=AnswerGenerator(generator),
+        sentence_regenerator=SentenceRegenerator(),
+        verifier=VerificationService(chunk_store=chunk_store, nli_client=HeuristicNLIClient()),
+        session_store=SessionStore(),
+        scoped_top_k=3,
+        refinement_token_budget=100,
+        ambiguity_gap_threshold=0.05,
+    )
+
+    session = asyncio.run(service.run_query(QueryRequest(query="What is PDRI maturity?")))
+    session = service.add_review_comment(
+        session.session_id,
+        ReviewCommentRequest(
+            text_selection="PDRI maturity",
+            char_start=0,
+            char_end=12,
+            comment_text="Please tighten wording.",
+        ),
+    )
+    session = service.set_citation_feedback(session.session_id, 0, 1, CitationFeedbackType.LIKE)
+    session = service.set_citation_feedback(session.session_id, 0, 1, CitationFeedbackType.DISLIKE)
+    session = service.set_citation_feedback(session.session_id, 1, 2, CitationFeedbackType.LIKE)
+
+    refined = asyncio.run(service.refine(session.session_id))
+    refine_requests = [request for request in generator.requests if request.mode == "refinement"]
+
+    assert refined.refinement_count == 1
+    assert len(refine_requests) == 1
+    refine_request = refine_requests[0]
+    assert {(pair.sentence_index, pair.citation_id) for pair in refine_request.rejected_pairs} == {(0, 1)}
+    assert {(pair.sentence_index, pair.citation_id) for pair in refine_request.approved_pairs} == {(1, 2)}
+    assert refine_request.mismatch_citation_ids == [1]
+    assert all(citation.citation_id != 1 for citation in refine_request.citation_index)
+    assert any(citation.citation_id == 2 for citation in refine_request.citation_index)

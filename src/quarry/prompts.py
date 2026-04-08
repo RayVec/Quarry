@@ -262,6 +262,22 @@ def _format_reviewer_feedback(request: GenerationRequest) -> str:
             feedback_lines.append(f'{index}. Selected: "{selection}"')
             feedback_lines.append(f"   Comment: {note}")
 
+    approved_lines: list[str] = []
+    for pair in request.approved_pairs:
+        if any(
+            rejected.sentence_index == pair.sentence_index and rejected.citation_id == pair.citation_id
+            for rejected in request.rejected_pairs
+        ):
+            continue
+        approved_lines.append(
+            f"- Reviewer approved sentence-citation pair (sentence_index={pair.sentence_index}, citation_id={pair.citation_id})."
+        )
+    if approved_lines:
+        feedback_lines.append(
+            "Reviewer approvals (positive signal, not proof):\n"
+            + "\n".join(approved_lines)
+        )
+
     return "\n".join(feedback_lines)
 
 
@@ -291,6 +307,9 @@ def _format_mode_instruction(request: GenerationRequest) -> str:
             "## Additional Instruction\n"
             "Regenerate the full response from the current answer context and passages.\n"
             "Avoid reliance on flagged passages.\n"
+            "Reviewer approval is a positive signal for sentence-citation pairs. If an approved pair\n"
+            "is still supported after revision, prefer preserving it. If it is no longer supported,\n"
+            "replace or remove it.\n"
             "Where the reviewer disagreed with a claim, present both the original\n"
             "evidence and any contradicting evidence. If evidence is insufficient\n"
             "after removing flagged passages, say so rather than citing unsupported\n"

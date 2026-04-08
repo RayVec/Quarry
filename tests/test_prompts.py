@@ -1,7 +1,7 @@
 import asyncio
 
 from quarry.adapters.interfaces import DecompositionClient
-from quarry.domain.models import CitationIndexEntry, GenerationRequest, ReviewComment
+from quarry.domain.models import CitationIndexEntry, GenerationRequest, ReviewComment, SentenceCitationPair
 from quarry.pipeline.decomposition import QueryDecomposer
 from quarry.prompts import SHARED_SYSTEM_PROMPT, decomposition_classification_prompt, decomposition_prompt, generation_prompt, repair_generation_prompt, with_shared_system_prompt
 
@@ -111,6 +111,22 @@ def test_generation_prompt_includes_refinement_feedback_sections() -> None:
     assert "Disagreement note: This claim may not apply to retrofit projects." in prompt
     assert "Contradicting evidence: Sentence 2: A later section says retrofit schedules were more variable than new-build schedules." in prompt
     assert "Avoid reliance on flagged passages." in prompt
+    assert "Reviewer approval is a positive signal for sentence-citation pairs." in prompt
+
+
+def test_generation_prompt_includes_reviewer_approved_pairs() -> None:
+    request = GenerationRequest(
+        original_query="What are the main schedule risks?",
+        facets=["schedule drivers"],
+        citation_index=[_citation(2, "Schedule risk remained elevated when procurement lagged design completion milestones.")],
+        mode="refinement",
+        approved_pairs=[SentenceCitationPair(sentence_index=1, citation_id=2)],
+    )
+
+    prompt = generation_prompt(request)
+
+    assert "Reviewer approvals (positive signal, not proof):" in prompt
+    assert "- Reviewer approved sentence-citation pair (sentence_index=1, citation_id=2)." in prompt
 
 
 def test_generation_prompt_includes_selection_comments() -> None:

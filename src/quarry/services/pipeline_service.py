@@ -23,6 +23,7 @@ from quarry.domain.models import (
     RetrievalFilters,
     ScopedRetrievalEnvelope,
     SelectionCommentEdit,
+    SentenceCitationPair,
     QueryType,
     ReviewComment,
     ReviewCommentRequest,
@@ -644,17 +645,20 @@ class PipelineService:
         prior_response = session.generated_response
         working_citations = list(session.citation_index)
         
-        disliked_citation_ids = [
-            fb.citation_id 
-            for fb in session.feedback.citation_feedback 
+        rejected_pairs = [
+            SentenceCitationPair(sentence_index=fb.sentence_index, citation_id=fb.citation_id)
+            for fb in session.feedback.citation_feedback
             if fb.feedback_type == CitationFeedbackType.DISLIKE
         ]
-        liked_citation_ids = [
-            fb.citation_id 
-            for fb in session.feedback.citation_feedback 
+        rejected_pair_set = {(pair.sentence_index, pair.citation_id) for pair in rejected_pairs}
+        approved_pairs = [
+            SentenceCitationPair(sentence_index=fb.sentence_index, citation_id=fb.citation_id)
+            for fb in session.feedback.citation_feedback
             if fb.feedback_type == CitationFeedbackType.LIKE
+            and (fb.sentence_index, fb.citation_id) not in rejected_pair_set
         ]
-        
+        disliked_citation_ids = sorted({pair.citation_id for pair in rejected_pairs})
+
         selection_comments = [comment for comment in session.feedback.comments if not comment.resolved]
         logger.info(
             "refinement started",
@@ -662,49 +666,62 @@ class PipelineService:
                 "session_id": session_id,
                 "comment_count": len(session.feedback.comments),
                 "sentence_comment_count": len(selection_comments),
-                "disliked_citations": len(disliked_citation_ids),
-                "liked_citations": len(liked_citation_ids),
+                "rejected_pairs": len(rejected_pairs),
+                "approved_pairs": len(approved_pairs),
             },
         )
+        if not selection_comments and not disliked_citation_ids:
+            logger.info(
+                "refinement no-op",
+                extra={
+                    "session_id": session_id,
+                    "reason": "no_comments_or_dislikes",
+                    "approved_pairs": len(approved_pairs),
+                },
+            )
+            return self.session_store.save(session)
         try:
             step2_rewrites = 0
-            step2_rewrites = 0
-            if selection_comments or disliked_citation_ids:
-                comment_lines = [
-                    f'Selected "{comment.text_selection}": {comment.comment_text}'
-                    for comment in selection_comments
-                ]
-                
-                citations_for_refinement = [
-                    c for c in working_citations if c.citation_id not in disliked_citation_ids
-                ]
-                
-                refine_request = GenerationRequest(
-                    original_query=session.original_query,
-                    facets=session.facets,
-                    citation_index=self._trim_citations_to_budget(citations_for_refinement),
-                    mode="refinement",
-                    existing_response=render_parsed_sentences(session.parsed_sentences),
-                    selection_comments=[
-                        comment.model_copy(deep=True) for comment in selection_comments
-                    ],
-                    disagreement_notes=comment_lines,
-                    disagreement_contexts=[],
-                    mismatch_citation_ids=disliked_citation_ids,
-                )
-                self._check_refinement_prompt_budget(refine_request, session.parsed_sentences)
-                refined_raw = await self._generate_with_retry(refine_request)
-                if refined_raw is not None:
-                    next_sentences = parse_generated_response(refined_raw)
-                    changed_indices = self._diff_changed_sentence_indices(session.parsed_sentences, next_sentences)
-                    session.parsed_sentences = next_sentences
-                    if changed_indices:
-                        session.parsed_sentences, working_citations = await self._verify_and_reindex_changed_sentences(
-                            session.parsed_sentences,
-                            working_citations,
-                            changed_indices,
-                        )
-                        step2_rewrites = len(changed_indices)
+            comment_lines = [
+                f'Selected "{comment.text_selection}": {comment.comment_text}'
+                for comment in selection_comments
+            ]
+
+            citations_for_refinement = [
+                c for c in working_citations if c.citation_id not in disliked_citation_ids
+            ]
+
+            refine_request = GenerationRequest(
+                original_query=session.original_query,
+                facets=session.facets,
+                citation_index=self._trim_citations_to_budget(
+                    citations_for_refinement,
+                    prioritized_citation_ids={pair.citation_id for pair in approved_pairs},
+                ),
+                mode="refinement",
+                existing_response=render_parsed_sentences(session.parsed_sentences),
+                selection_comments=[
+                    comment.model_copy(deep=True) for comment in selection_comments
+                ],
+                disagreement_notes=comment_lines,
+                disagreement_contexts=[],
+                mismatch_citation_ids=disliked_citation_ids,
+                approved_pairs=approved_pairs,
+                rejected_pairs=rejected_pairs,
+            )
+            self._check_refinement_prompt_budget(refine_request, session.parsed_sentences)
+            refined_raw = await self._generate_with_retry(refine_request)
+            if refined_raw is not None:
+                next_sentences = parse_generated_response(refined_raw)
+                changed_indices = self._diff_changed_sentence_indices(session.parsed_sentences, next_sentences)
+                session.parsed_sentences = next_sentences
+                if changed_indices:
+                    session.parsed_sentences, working_citations = await self._verify_and_reindex_changed_sentences(
+                        session.parsed_sentences,
+                        working_citations,
+                        changed_indices,
+                    )
+                    step2_rewrites = len(changed_indices)
 
             step3_additions = 0
         except Exception:
@@ -992,8 +1009,21 @@ class PipelineService:
             next_id += 1
         return merged
 
-    def _trim_citations_to_budget(self, citations: list[CitationIndexEntry]) -> list[CitationIndexEntry]:
-        prioritized = sorted(citations, key=lambda citation: (citation.source_facet == "quote_discovery", -citation.retrieval_score))
+    def _trim_citations_to_budget(
+        self,
+        citations: list[CitationIndexEntry],
+        *,
+        prioritized_citation_ids: set[int] | None = None,
+    ) -> list[CitationIndexEntry]:
+        prioritized_ids = prioritized_citation_ids or set()
+        prioritized = sorted(
+            citations,
+            key=lambda citation: (
+                citation.citation_id not in prioritized_ids,
+                citation.source_facet == "quote_discovery",
+                -citation.retrieval_score,
+            ),
+        )
         selected: list[CitationIndexEntry] = []
         used_tokens = 0
         for citation in prioritized:
