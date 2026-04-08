@@ -177,7 +177,6 @@ def test_response_review_dialog_and_feedback_flow(page: Page, web_server) -> Non
     expect(page.get_by_test_id("citation-dialog")).to_be_hidden()
     expect(page.locator(".citation-pill.replaced").first).to_be_visible()
 
-    page.get_by_test_id("toggle-review-panel").click()
     expect(page.get_by_test_id("feedback-summary")).to_contain_text("1 comments captured, 1 citation replacements pending.")
 
     page.locator("[data-testid^='citation-']").first.click()
@@ -207,7 +206,6 @@ def test_unified_refinement_flow(page: Page, web_server) -> None:
     _initial_sentences = parse_metric(page.get_by_test_id("status-sentences").inner_text())
     close_diagnostics(page)
 
-    page.get_by_test_id("toggle-review-panel").click()
     open_selection_comment_editor(page)
     page.get_by_test_id("selection-comment-input").fill("Please add detail about shutdown planning risks.")
     page.get_by_test_id("save-selection-comment").click()
