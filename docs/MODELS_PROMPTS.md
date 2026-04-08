@@ -402,14 +402,14 @@ Refinement mode tells the model:
 - present conflicting evidence when needed
 - say so when evidence is insufficient
 
-**How citation dislike reaches this prompt (runtime wiring):**
+**How citation dislike / like reach this prompt (runtime wiring):**
 
-- Refinement generation only runs when there are unresolved selection comments and/or at least one **disliked** citation (see pipeline refine gate). **Likes are not injected into the prompt.**
-- For each refinement call, `mismatch_citation_ids` is set to the list of citation ids the reviewer **disliked**.
-- Source passages for the request **exclude** those disliked ids entirely, so their chunk text does not appear under **Source Passages**.
-- `## Reviewer Feedback` is built by `_format_reviewer_feedback`: for each id in `mismatch_citation_ids`, it emits a line that the citation was flagged as a mismatch (when the citation is no longer in the trimmed index, the line is generic; if it were still present, it would include section path and note).
-- Individual passage lines can be prefixed with `[MISMATCH: …]` via `_format_citation_line` when that passage’s id is in `mismatch_citation_ids` **and** the passage is still included — in the usual dislike path the passage is omitted instead, so the model mainly sees the textual feedback bullets plus the remaining passages.
-- Unresolved selection comments are also merged into **Reviewer Feedback** and into `disagreement_notes`-driven lines; refinement mode instructions additionally tell the model to treat selection comments as required edits when present.
+- Refinement generation only runs when there are unresolved selection comments and/or at least one **disliked** citation. **Likes do not trigger refine by themselves.**
+- The refinement request now carries pair-scoped `approved_pairs` and `rejected_pairs` so the prompt can reason about the same citation id in different sentence contexts.
+- `mismatch_citation_ids` is still populated for globally rejected citation ids, but only as a compatibility bridge. Mixed feedback for the same citation id should be represented through `approved_pairs` / `rejected_pairs`, not by broad mismatch taint.
+- Source passages for the request exclude globally rejected ids entirely, so their chunk text does not appear under **Source Passages**.
+- `## Reviewer Feedback` includes soft approval lines for `approved_pairs` and mismatch lines for globally rejected ids. Passage lines can still be prefixed with `[MISMATCH: …]` when a globally rejected id remains in the trimmed index.
+- Unresolved selection comments are also merged into **Reviewer Feedback** and into `disagreement_notes`-driven lines; refinement mode instructions additionally tell the model to preserve approved pairs only if they remain supported after rewriting.
 
 ### 12.5 Regeneration mode
 

@@ -256,7 +256,7 @@ The backend now exposes a unified review action model built around text selectio
 - single refine endpoint that applies selection comments and citation-driven refinement decisions
 - resolved comment tracking when a prior selection no longer anchors in the refined response
 
-**Refine and citation thumbs:** Running refine triggers a full-response regeneration only when there is at least one **unresolved selection comment** or at least one **disliked** citation. **Disliked** citations are dropped from the evidence shown to the model for that call and are listed in the prompt’s reviewer-feedback section as mismatches. **Likes** are stored for the UI and logs only; they are **not** passed into the refinement prompt. See `docs/ARCHITECTURE.md` (section 8.1) for the full pipeline description.
+**Refine and citation thumbs:** Running refine triggers a full-response regeneration only when there is at least one **unresolved selection comment** or at least one **disliked** citation. **Disliked** citations are treated as hard negatives and are removed from the passages shown to the model for that call. **Likes** are soft positives: they do not trigger refine, but when refine is already happening they are passed through as pair-scoped approval signals so the backend can prefer preserving still-supported sentence/citation pairs. See `docs/ARCHITECTURE.md` (section 8.1) for the full pipeline description.
 
 ## Query Pipeline Highlights
 

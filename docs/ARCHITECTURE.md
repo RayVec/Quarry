@@ -412,14 +412,16 @@ Important feedback fields:
 - there is at least one **unresolved** selection comment, or
 - there is at least one citation with **`dislike`** feedback.
 
-If the reviewer only left **`like`** feedback (and no unresolved comments), refine **does not** call the generator to rewrite the answer; it still performs post-refine bookkeeping (for example re-anchoring comments, clearing feedback state, bumping `refinement_count`).
+If the reviewer only left **`like`** feedback (and no unresolved comments or dislikes), refine **does not** call the generator to rewrite the answer; it returns a no-op and does not clear feedback state or increment `refinement_count`.
 
-**Dislike → model input:**
+**Dislike / like → model input:**
 
-- Citations whose ids appear in **disliked** feedback are **removed** from the passage list passed into the refinement `GenerationRequest` (they are not included in `citation_index` for that call).
-- Those same ids are passed as `mismatch_citation_ids`. The generation prompt’s **Reviewer Feedback** section lists them as flagged mismatches (and passage lines that remain in the index can be prefixed with `[MISMATCH: …]` when the id is still present). Together with refinement mode instructions, this steers the model away from relying on those sources.
+- Feedback is handled at the sentence/citation pair level during refinement. The request carries pair-scoped `approved_pairs` and `rejected_pairs` so the prompt can preserve approved relations when still supported.
+- Citations whose ids are rejected in the current refine call are removed from the passage list passed into the refinement `GenerationRequest`.
+- `mismatch_citation_ids` is kept only as a compatibility bridge for globally rejected citations. It should not be used to represent mixed pair feedback for the same citation id.
+- The generation prompt’s **Reviewer Feedback** section lists pair-scoped approvals as soft positive signals, and the refinement instructions say to preserve them only if they still remain supported after rewriting.
 
-**Like → model input:** **`like` is not passed into the refinement prompt.** The pipeline only counts likes for logging. Likes are useful for UI state (for example thumbs on citation badges) but do not currently add text to `GenerationRequest` or change which passages are included.
+**Like semantics:** **`like`** is a soft positive signal. It does not trigger refine by itself, but when refine is already running it is passed into the request as a pair-scoped approval so the model can prefer preserving that sentence/citation relation if it still holds. It never overrides verification failure or an explicit dislike.
 
 **Related:** Choosing a replacement passage in the citation drawer updates `citation_index` (and may set `reviewer_note` / `replacement_pending` on the entry). Refine then uses the updated index when building source passages; that path is separate from the thumbs but composes with dislike-driven removal.
 
