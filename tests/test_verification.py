@@ -217,3 +217,94 @@ def test_verifier_allows_shorter_quotes_when_reference_sets_minimum_words() -> N
 
     assert verified.parsed_sentences[0].references[0].verified is True
     assert verified.parsed_sentences[0].status == SentenceStatus.UNCHECKED
+
+
+def test_verifier_quote_lookup_metrics_without_fallback() -> None:
+    chunk = build_chunk(
+        "m1",
+        "Factory fabrication reduced weather delays during installation and stabilized handoff planning across the team.",
+    )
+    store = InMemoryChunkStore([chunk])
+    verifier = VerificationService(chunk_store=store, nli_client=HeuristicNLIClient())
+    parsed = [
+        ParsedSentence(
+            sentence_index=0,
+            sentence_text="Factory fabrication reduced weather delays during installation.",
+            sentence_type=SentenceType.CLAIM,
+            references=[
+                Reference(
+                    reference_quote="Factory fabrication reduced weather delays during installation and stabilized",
+                    minimum_quote_words=8,
+                )
+            ],
+            status=SentenceStatus.UNCHECKED,
+        )
+    ]
+    citations = [
+        CitationIndexEntry(
+            citation_id=1,
+            chunk_id="m1",
+            text=chunk.text,
+            document_id=chunk.document_id,
+            document_title=chunk.document_title,
+            section_heading=chunk.section_heading,
+            section_path=chunk.section_path,
+            page_number=chunk.page_start,
+            retrieval_score=0.9,
+            source_facet="factory fabrication",
+        )
+    ]
+
+    verifier.verify_exact_matches(parsed, citations)
+
+    assert verifier.quote_lookup_metrics["scoped_lookups"] == 1.0
+    assert verifier.quote_lookup_metrics["full_corpus_fallbacks"] == 0.0
+    assert verifier.quote_lookup_metrics["quote_match_rate"] == 1.0
+    assert verifier.quote_lookup_metrics["avg_candidates_checked"] == 1.0
+
+
+def test_verifier_quote_lookup_metrics_with_fallback() -> None:
+    chunk_a = build_chunk(
+        "fa",
+        "Prefabricated modular approaches led to a 23 percent decrease in overall schedule duration across Phase III projects and improved coordination discipline.",
+    )
+    chunk_b = build_chunk(
+        "fb",
+        "Projects that locked procurement packages later than the sixty percent design milestone experienced repeated site disruptions because equipment lead times no longer aligned with installation windows.",
+    )
+    store = InMemoryChunkStore([chunk_a, chunk_b])
+    verifier = VerificationService(chunk_store=store, nli_client=HeuristicNLIClient())
+    parsed = [
+        ParsedSentence(
+            sentence_index=0,
+            sentence_text="Late procurement planning created disruption risk.",
+            sentence_type=SentenceType.CLAIM,
+            references=[
+                Reference(
+                    reference_quote="Projects that locked procurement packages later than the sixty percent design milestone experienced repeated site disruptions because equipment lead times no longer aligned with installation windows."
+                )
+            ],
+            status=SentenceStatus.UNCHECKED,
+        )
+    ]
+    citations = [
+        CitationIndexEntry(
+            citation_id=1,
+            chunk_id="fa",
+            text=chunk_a.text,
+            document_id=chunk_a.document_id,
+            document_title=chunk_a.document_title,
+            section_heading=chunk_a.section_heading,
+            section_path=chunk_a.section_path,
+            page_number=chunk_a.page_start,
+            retrieval_score=0.8,
+            source_facet="modular schedule",
+        )
+    ]
+
+    verifier.verify_exact_matches(parsed, citations)
+
+    assert verifier.quote_lookup_metrics["scoped_lookups"] == 1.0
+    assert verifier.quote_lookup_metrics["full_corpus_fallbacks"] == 1.0
+    assert verifier.quote_lookup_metrics["quote_match_rate"] == 1.0
+    assert verifier.quote_lookup_metrics["avg_candidates_checked"] == 2.0

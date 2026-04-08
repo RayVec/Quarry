@@ -343,6 +343,20 @@ These parsed sentences become the reviewable unit in the UI.
 - sentence status assignment
 - NLI confidence scoring
 
+Runtime optimization (behavior-preserving):
+
+- `InMemoryChunkStore` precomputes normalized text per chunk at load time and keeps a `chunk_id -> normalized_text` map.
+- `find_chunk_by_quote()` still uses the same substring matching behavior, but now reuses precomputed normalized chunk text instead of normalizing per lookup.
+- Scoped lookup (`chunk_ids` provided) now uses direct chunk-id lookup plus precomputed normalized text, avoiding repeated normalization in the hot path.
+- `verify_exact_matches()` flow is unchanged: search citation chunks first, then fall back to full corpus only on miss.
+
+The verifier also tracks lightweight lookup metrics (`quote_lookup_metrics`) to support performance observation:
+
+- `scoped_lookups`
+- `full_corpus_fallbacks`
+- `quote_match_rate`
+- `avg_candidates_checked`
+
 The trust model is:
 
 1. the quote must exist in the source text

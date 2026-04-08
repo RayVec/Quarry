@@ -267,6 +267,8 @@ Important current behavior:
 - single-hop generation also trims citation context to the strongest passages
 - exact quote verification still runs after generation
 - NLI confidence scoring still runs after exact-match verification
+- quote verification now precomputes normalized chunk text once per in-memory store load and reuses it for scoped/full quote lookup (no behavior change, lower repeated work)
+- verification now exposes lightweight lookup telemetry (`scoped_lookups`, `full_corpus_fallbacks`, `quote_match_rate`, `avg_candidates_checked`) for performance monitoring
 - when hosted or local generation falls back, QUARRY now emits conservative `[NO_REF]` output instead of fabricating a sentence from raw chunk text
 - lingering ungrounded `CLAIM` sentences are removed from the final response instead of being shown as unsupported facts
 - lingering ungrounded `SYNTHESIS` sentences are also removed from the final response

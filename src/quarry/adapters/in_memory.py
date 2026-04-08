@@ -62,6 +62,10 @@ class InMemoryChunkStore(ChunkStore):
     def __init__(self, chunks: Iterable[ChunkObject]) -> None:
         self._chunks = list(chunks)
         self._chunk_map = {chunk.chunk_id: chunk for chunk in self._chunks}
+        self._normalized_chunk_text_by_id = {
+            chunk.chunk_id: normalize_text(chunk.text)
+            for chunk in self._chunks
+        }
 
     @classmethod
     def from_directory(cls, corpus_dir: Path) -> "InMemoryChunkStore":
@@ -103,9 +107,18 @@ class InMemoryChunkStore(ChunkStore):
         normalized_quote = normalize_text(quote)
         if not normalized_quote:
             return None
-        candidates = self._chunks if chunk_ids is None else [self._chunk_map[chunk_id] for chunk_id in chunk_ids if chunk_id in self._chunk_map]
-        for chunk in candidates:
-            if normalized_quote in normalize_text(chunk.text):
+        if chunk_ids is None:
+            candidates = self._chunks
+            for chunk in candidates:
+                if normalized_quote in self._normalized_chunk_text_by_id.get(chunk.chunk_id, ""):
+                    return chunk
+            return None
+
+        for chunk_id in chunk_ids:
+            chunk = self._chunk_map.get(chunk_id)
+            if chunk is None:
+                continue
+            if normalized_quote in self._normalized_chunk_text_by_id.get(chunk_id, ""):
                 return chunk
         return None
 

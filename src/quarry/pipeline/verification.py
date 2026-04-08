@@ -22,6 +22,33 @@ class VerificationService:
         self.chunk_store = chunk_store
         self.nli_client = nli_client
         self._confidence_cache: OrderedDict[tuple[str, str], ScoredReference] = OrderedDict()
+        self.quote_lookup_metrics: dict[str, float] = {
+            "scoped_lookups": 0.0,
+            "full_corpus_fallbacks": 0.0,
+            "total_lookups": 0.0,
+            "matched_lookups": 0.0,
+            "total_candidates_checked": 0.0,
+            "avg_candidates_checked": 0.0,
+            "quote_match_rate": 0.0,
+        }
+
+    def _record_quote_lookup(self, *, scoped: bool, used_fallback: bool, matched: bool, candidates_checked: int) -> None:
+        if scoped:
+            self.quote_lookup_metrics["scoped_lookups"] += 1.0
+        if used_fallback:
+            self.quote_lookup_metrics["full_corpus_fallbacks"] += 1.0
+        self.quote_lookup_metrics["total_lookups"] += 1.0
+        if matched:
+            self.quote_lookup_metrics["matched_lookups"] += 1.0
+        self.quote_lookup_metrics["total_candidates_checked"] += float(candidates_checked)
+
+        total_lookups = max(self.quote_lookup_metrics["total_lookups"], 1.0)
+        self.quote_lookup_metrics["avg_candidates_checked"] = (
+            self.quote_lookup_metrics["total_candidates_checked"] / total_lookups
+        )
+        self.quote_lookup_metrics["quote_match_rate"] = (
+            self.quote_lookup_metrics["matched_lookups"] / total_lookups
+        )
 
     def verify_exact_matches(
         self,
@@ -66,8 +93,10 @@ class VerificationService:
                     failed_count += 1
                     continue
 
+                used_fallback = False
                 chunk = self.chunk_store.find_chunk_by_quote(reference.reference_quote, chunk_ids=chunk_ids_in_citations)
                 if chunk is None:
+                    used_fallback = True
                     chunk = self.chunk_store.find_chunk_by_quote(reference.reference_quote)
                     if chunk is not None and chunk.chunk_id not in citation_by_chunk_id:
                         citation = CitationIndexEntry(
@@ -97,6 +126,14 @@ class VerificationService:
                                 "console_visible": False,
                             },
                         )
+                scoped_candidate_count = len(chunk_ids_in_citations)
+                total_candidate_count = len(self.chunk_store.all_chunks()) if used_fallback else scoped_candidate_count
+                self._record_quote_lookup(
+                    scoped=True,
+                    used_fallback=used_fallback,
+                    matched=chunk is not None,
+                    candidates_checked=total_candidate_count,
+                )
 
                 if chunk is None:
                     failed_count += 1
@@ -140,6 +177,7 @@ class VerificationService:
             extra={
                 "sentence_status_summary": _sentence_status_summary(parsed_sentences),
                 "citation_count": len(citation_index),
+                "quote_lookup_metrics": self.quote_lookup_metrics,
             },
         )
         return VerificationResult(parsed_sentences=parsed_sentences, citation_index=citation_index)
