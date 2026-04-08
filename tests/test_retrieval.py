@@ -23,12 +23,12 @@ def test_reciprocal_rank_fusion_rewards_consensus() -> None:
     chunk_c = build_chunk("c", "safety benefits")
 
     sparse = [
-        RetrievedPassage(chunk=chunk_a, score=3.0, source_facet="facet", rank=1, retriever="sparse"),
-        RetrievedPassage(chunk=chunk_b, score=2.0, source_facet="facet", rank=2, retriever="sparse"),
+        RetrievedPassage(chunk=chunk_a, score=3.0, source_facet="facet", source_facets=["facet"], rank=1, retriever="sparse"),
+        RetrievedPassage(chunk=chunk_b, score=2.0, source_facet="facet", source_facets=["facet"], rank=2, retriever="sparse"),
     ]
     dense = [
-        RetrievedPassage(chunk=chunk_c, score=0.95, source_facet="facet", rank=1, retriever="dense"),
-        RetrievedPassage(chunk=chunk_a, score=0.90, source_facet="facet", rank=2, retriever="dense"),
+        RetrievedPassage(chunk=chunk_c, score=0.95, source_facet="facet", source_facets=["facet"], rank=1, retriever="dense"),
+        RetrievedPassage(chunk=chunk_a, score=0.90, source_facet="facet", source_facets=["facet"], rank=2, retriever="dense"),
     ]
 
     fused = reciprocal_rank_fusion([sparse, dense], rrf_k=60)
@@ -58,7 +58,7 @@ class IdentityReranker:
 
 def test_hybrid_retriever_survives_single_retriever_failure() -> None:
     chunk = build_chunk("a", "modular schedule improvements")
-    static = RetrievedPassage(chunk=chunk, score=1.0, source_facet="facet", rank=1, retriever="dense")
+    static = RetrievedPassage(chunk=chunk, score=1.0, source_facet="facet", source_facets=["facet"], rank=1, retriever="dense")
     retriever = HybridRetriever(
         sparse_retriever=FailingRetriever(),
         dense_retriever=StaticRetriever(static),
@@ -78,8 +78,8 @@ def test_hybrid_retriever_survives_single_retriever_failure() -> None:
 
 def test_hybrid_retriever_uses_reduced_single_hop_limits() -> None:
     chunk = build_chunk("a", "modular schedule improvements")
-    sparse = StaticRetriever(RetrievedPassage(chunk=chunk, score=1.0, source_facet="facet", rank=1, retriever="sparse"))
-    dense = StaticRetriever(RetrievedPassage(chunk=chunk, score=1.0, source_facet="facet", rank=1, retriever="dense"))
+    sparse = StaticRetriever(RetrievedPassage(chunk=chunk, score=1.0, source_facet="facet", source_facets=["facet"], rank=1, retriever="sparse"))
+    dense = StaticRetriever(RetrievedPassage(chunk=chunk, score=1.0, source_facet="facet", source_facets=["facet"], rank=1, retriever="dense"))
     retriever = HybridRetriever(
         sparse_retriever=sparse,
         dense_retriever=dense,
@@ -105,9 +105,9 @@ def test_build_citation_index_only_marks_top_result_with_global_ambiguity() -> N
     chunk_c = build_chunk("c", "safety benefits")
 
     passages = [
-        RetrievedPassage(chunk=chunk_a, score=0.99, source_facet="facet", rank=1, retriever="reranked"),
-        RetrievedPassage(chunk=chunk_b, score=0.985, source_facet="facet", rank=2, retriever="reranked"),
-        RetrievedPassage(chunk=chunk_c, score=0.91, source_facet="facet", rank=3, retriever="reranked"),
+        RetrievedPassage(chunk=chunk_a, score=0.99, source_facet="facet", source_facets=["facet"], rank=1, retriever="reranked"),
+        RetrievedPassage(chunk=chunk_b, score=0.985, source_facet="facet", source_facets=["facet"], rank=2, retriever="reranked"),
+        RetrievedPassage(chunk=chunk_c, score=0.91, source_facet="facet", source_facets=["facet"], rank=3, retriever="reranked"),
     ]
 
     citations = build_citation_index(passages, ambiguity_gap_threshold=0.05)
@@ -118,3 +118,28 @@ def test_build_citation_index_only_marks_top_result_with_global_ambiguity() -> N
     assert citations[1].ambiguity_gap is None
     assert citations[2].ambiguity_review_required is False
     assert citations[2].ambiguity_gap is None
+
+
+def test_hybrid_retriever_multihop_uses_anchor_pool_and_budget() -> None:
+    chunk = build_chunk("a", "modular schedule improvements")
+    sparse = StaticRetriever(RetrievedPassage(chunk=chunk, score=1.0, source_facet="facet", source_facets=["facet"], rank=1, retriever="sparse"))
+    dense = StaticRetriever(RetrievedPassage(chunk=chunk, score=1.0, source_facet="facet", source_facets=["facet"], rank=1, retriever="dense"))
+    retriever = HybridRetriever(
+        sparse_retriever=sparse,
+        dense_retriever=dense,
+        reranker=IdentityReranker(),
+        sparse_top_k=30,
+        dense_top_k=30,
+        rerank_top_k=30,
+        multihop_anchor_pool_size=40,
+        multihop_rerank_budget=20,
+        rrf_k=60,
+    )
+
+    passages, _diagnostics = asyncio.run(
+        retriever.retrieve(original_query="compare schedule and cost drivers", facets=["f1", "f2"], query_type="multi_hop")
+    )
+
+    assert len(passages) == 1
+    assert sparse.top_ks == [30, 30]
+    assert dense.top_ks == [30, 30]

@@ -264,8 +264,11 @@ Important current behavior:
 
 - obvious query shapes are classified heuristically first before escalating to a model
 - single-hop queries use smaller retrieval budgets than multi-hop queries
+- multi-hop retrieval now keeps a wider anchored candidate pool (`retrieval.multihop_anchor_pool_size`, default 40) before reranking down to `retrieval.multihop_rerank_budget` (default 20)
+- citation entries now preserve facet provenance in both `source_facet` (primary facet) and `source_facets` (all facets that surfaced the chunk)
 - single-hop generation also trims citation context to the strongest passages
 - exact quote verification still runs after generation
+- multi-hop flow now performs a post-exact-match facet coverage check and may run one bounded follow-up retrieval + supplement pass when a facet is uncovered
 - NLI confidence scoring still runs after exact-match verification
 - quote verification now precomputes normalized chunk text once per in-memory store load and reuses it for scoped/full quote lookup (no behavior change, lower repeated work)
 - verification now exposes lightweight lookup telemetry (`scoped_lookups`, `full_corpus_fallbacks`, `quote_match_rate`, `avg_candidates_checked`) for performance monitoring

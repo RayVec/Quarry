@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections import OrderedDict
 
 from quarry.adapters.interfaces import ChunkStore, NLIClient
-from quarry.domain.models import ConfidenceLabel, CitationIndexEntry, ParsedSentence, ReviewWarning, ScoredReference, SentenceStatus, SentenceType, VerificationResult
+from quarry.domain.models import ConfidenceLabel, CoverageCheckResult, CitationIndexEntry, ParsedSentence, ReviewWarning, ScoredReference, SentenceStatus, SentenceType, VerificationResult
 from quarry.logging_utils import logger_with_trace
 
 
@@ -111,6 +111,7 @@ class VerificationService:
                             page_end=chunk.page_end,
                             retrieval_score=0.0,
                             source_facet="quote_discovery",
+                            source_facets=["quote_discovery"],
                         )
                         citation_index.append(citation)
                         citation_by_chunk_id[chunk.chunk_id] = citation
@@ -181,6 +182,39 @@ class VerificationService:
             },
         )
         return VerificationResult(parsed_sentences=parsed_sentences, citation_index=citation_index)
+
+    def check_facet_coverage(
+        self,
+        *,
+        facets: list[str],
+        parsed_sentences: list[ParsedSentence],
+        citation_index: list[CitationIndexEntry],
+    ) -> CoverageCheckResult:
+        facet_chunk_ids: dict[str, set[str]] = {facet: set() for facet in facets}
+        for citation in citation_index:
+            for facet in citation.source_facets or [citation.source_facet]:
+                if facet in facet_chunk_ids:
+                    facet_chunk_ids[facet].add(citation.chunk_id)
+
+        resolved_chunk_ids: set[str] = set()
+        for sentence in parsed_sentences:
+            for reference in sentence.references:
+                if reference.verified and reference.matched_chunk_id:
+                    resolved_chunk_ids.add(reference.matched_chunk_id)
+
+        covered: list[str] = []
+        gap: list[str] = []
+        for facet in facets:
+            candidate_ids = facet_chunk_ids.get(facet, set())
+            if candidate_ids and resolved_chunk_ids.intersection(candidate_ids):
+                covered.append(facet)
+            else:
+                gap.append(facet)
+        return CoverageCheckResult(
+            covered_facets=covered,
+            gap_facets=gap,
+            trigger_followup=bool(gap),
+        )
 
     async def score_confidence(self, parsed_sentences: list[ParsedSentence]) -> list[ParsedSentence]:
         logger.info(

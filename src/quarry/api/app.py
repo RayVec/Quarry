@@ -80,6 +80,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             sparse_top_k=settings.sparse_top_k,
             dense_top_k=settings.dense_top_k,
             rerank_top_k=settings.rerank_top_k,
+            multihop_anchor_pool_size=settings.multihop_anchor_pool_size,
+            multihop_rerank_budget=settings.multihop_rerank_budget,
             rrf_k=settings.retrieval_rrf_k,
         ),
         answer_generator=AnswerGenerator(generation_client),

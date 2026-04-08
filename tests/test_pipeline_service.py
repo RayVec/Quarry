@@ -18,6 +18,7 @@ from quarry.domain.models import (
     QueryProgressStage,
     QueryRequest,
     QueryRunStatus,
+    QueryType,
     ReviewCommentRequest,
     RetrievedPassage,
     SessionState,
@@ -178,6 +179,50 @@ class StaticHybridRetriever:
     async def retrieve(self, *, original_query: str, facets: list[str], query_type=None):
         self.calls.append({"original_query": original_query, "facets": list(facets), "query_type": query_type})
         return list(self.passages), []
+
+    async def retrieve_followup(self, *, original_query: str, facet: str, query_type=None):
+        self.calls.append({"original_query": original_query, "facets": [facet], "query_type": query_type, "followup": True})
+        return list(self.passages), None
+
+
+class RecordingVerificationService(VerificationService):
+    def __init__(self, *, chunk_store, nli_client, events: list[tuple[str, object]]) -> None:
+        super().__init__(chunk_store=chunk_store, nli_client=nli_client)
+        self.events = events
+
+    def verify_exact_matches(self, parsed_sentences, citation_index, *, sentence_indices=None):
+        self.events.append(("verify_exact_matches", sentence_indices is None, len(parsed_sentences)))
+        return super().verify_exact_matches(parsed_sentences, citation_index, sentence_indices=sentence_indices)
+
+    def check_facet_coverage(self, *, facets, parsed_sentences, citation_index):
+        self.events.append(("check_facet_coverage", tuple(facets)))
+        return super().check_facet_coverage(facets=facets, parsed_sentences=parsed_sentences, citation_index=citation_index)
+
+    async def score_confidence(self, parsed_sentences):
+        self.events.append(("score_confidence", len(parsed_sentences)))
+        return await super().score_confidence(parsed_sentences)
+
+
+class MultiHopFollowupGenerationClient:
+    def __init__(self) -> None:
+        self.requests = []
+
+    async def generate(self, request):
+        self.requests.append(request)
+        if request.mode == "supplement":
+            quote = request.citation_index[-1].text
+            return f'[CLAIM] {quote} [REF: "{quote}"]'
+        quote = request.citation_index[0].text
+        return f'[CLAIM] {quote} [REF: "{quote}"]'
+
+
+class StaticMultiHopDecomposer:
+    async def decompose(self, query: str):
+        class _Result:
+            query_type = QueryType.MULTI_HOP
+            facets = ["facet-one", "facet-two"]
+
+        return _Result()
 
 
 class RaisingDecomposer:
@@ -685,6 +730,136 @@ def test_single_hop_generation_request_uses_trimmed_citation_budget() -> None:
     assert len(generator.requests) == 1
     assert len(generator.requests[0].citation_index) == 8
     assert len(session.citation_index) == 12
+
+
+def test_multihop_followup_skip_uses_relative_score_floor() -> None:
+    chunk_one = build_chunks()[0]
+    chunk_two = build_chunks()[1]
+    chunk_store = InMemoryChunkStore([chunk_one, chunk_two])
+    retriever = StaticHybridRetriever(
+        [
+            RetrievedPassage(
+                chunk=chunk_one,
+                score=0.8,
+                source_facet="facet-one",
+                source_facets=["facet-one"],
+                rank=1,
+                retriever="reranked",
+            ),
+            RetrievedPassage(
+                chunk=chunk_two,
+                score=0.4,
+                source_facet="facet-two",
+                source_facets=["facet-two"],
+                rank=2,
+                retriever="reranked",
+            )
+        ]
+    )
+    generator = MultiHopFollowupGenerationClient()
+    service = PipelineService(
+        chunk_store=chunk_store,
+        query_decomposer=StaticMultiHopDecomposer(),
+        hybrid_retriever=retriever,
+        answer_generator=AnswerGenerator(generator),
+        sentence_regenerator=SentenceRegenerator(),
+        verifier=VerificationService(chunk_store=chunk_store, nli_client=HeuristicNLIClient()),
+        session_store=SessionStore(),
+        scoped_top_k=3,
+        refinement_token_budget=8000,
+        ambiguity_gap_threshold=0.05,
+    )
+
+    original_retrieve_followup = retriever.retrieve_followup
+
+    async def _low_score_followup(*, original_query: str, facet: str, query_type=None):
+        retriever.calls.append({"original_query": original_query, "facets": [facet], "query_type": query_type, "followup": True})
+        return [
+            RetrievedPassage(
+                chunk=chunk_two,
+                score=0.35,
+                source_facet=facet,
+                source_facets=[facet],
+                rank=1,
+                retriever="reranked",
+            )
+        ], None
+
+    retriever.retrieve_followup = _low_score_followup  # type: ignore[method-assign]
+    session = asyncio.run(service.run_query(QueryRequest(query="compare facet-one and facet-two")))
+
+    assert session.response_mode.value == "response_review"
+    assert [request.mode for request in generator.requests] == ["initial"]
+    assert any(call.get("followup") for call in retriever.calls)
+    retriever.retrieve_followup = original_retrieve_followup  # type: ignore[method-assign]
+
+
+def test_multihop_followup_waits_for_exact_match_before_confidence_scoring() -> None:
+    chunk_one = build_chunks()[0]
+    chunk_two = build_chunks()[1]
+    chunk_store = InMemoryChunkStore([chunk_one, chunk_two])
+    events: list[tuple[str, object]] = []
+    retriever = StaticHybridRetriever(
+        [
+            RetrievedPassage(
+                chunk=chunk_one,
+                score=0.8,
+                source_facet="facet-one",
+                source_facets=["facet-one"],
+                rank=1,
+                retriever="reranked",
+            ),
+            RetrievedPassage(
+                chunk=chunk_two,
+                score=0.4,
+                source_facet="facet-two",
+                source_facets=["facet-two"],
+                rank=2,
+                retriever="reranked",
+            )
+        ]
+    )
+
+    async def _followup(*, original_query: str, facet: str, query_type=None):
+        retriever.calls.append({"original_query": original_query, "facets": [facet], "query_type": query_type, "followup": True})
+        return [
+            RetrievedPassage(
+                chunk=chunk_two,
+                score=0.95,
+                source_facet="facet-two",
+                source_facets=["facet-two"],
+                rank=1,
+                retriever="reranked",
+            )
+        ], None
+
+    retriever.retrieve_followup = _followup  # type: ignore[method-assign]
+    generator = MultiHopFollowupGenerationClient()
+    service = PipelineService(
+        chunk_store=chunk_store,
+        query_decomposer=StaticMultiHopDecomposer(),
+        hybrid_retriever=retriever,
+        answer_generator=AnswerGenerator(generator),
+        sentence_regenerator=SentenceRegenerator(),
+        verifier=RecordingVerificationService(
+            chunk_store=chunk_store,
+            nli_client=HeuristicNLIClient(),
+            events=events,
+        ),
+        session_store=SessionStore(),
+        scoped_top_k=3,
+        refinement_token_budget=8000,
+        ambiguity_gap_threshold=0.05,
+    )
+
+    session = asyncio.run(service.run_query(QueryRequest(query="compare facet-one and facet-two")))
+
+    assert session.response_mode.value == "response_review"
+    assert events[0][0] == "verify_exact_matches"
+    assert events[1][0] == "check_facet_coverage"
+    assert events[2][0] == "verify_exact_matches"
+    assert events[-1][0] == "score_confidence"
+    assert [request.mode for request in generator.requests] == ["initial", "supplement"]
 
 
 def test_citation_feedback_is_scoped_to_sentence_index() -> None:

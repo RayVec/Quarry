@@ -69,8 +69,17 @@ def decomposition_prompt(query: str, max_facets: int) -> str:
         "- Every named entity in the original query (project names,\n"
         "  organizations, standards, specific metrics) must appear in\n"
         "  at least one facet\n"
+        "- When a query links two entities through a relationship,\n"
+        "  include bridge-aware coverage: one facet per entity plus\n"
+        "  one facet for the connecting relation when it fits the query\n"
         "- Do not combine two distinct topics into one facet\n"
         "- Do not produce facets that overlap heavily with each other\n\n"
+        "Bridge example:\n"
+        'Query: "What standard governs the material used in the bridge described in RT-361?"\n'
+        "Facets:\n"
+        '- "What bridge is described in RT-361?"\n'
+        '- "What material specification is stated for the RT-361 bridge?"\n'
+        '- "What standard governs that bridge material specification?"\n\n'
         "Example:\n"
         'Query: "What are the key risk factors and recommended mitigation\n'
         'strategies for schedule delays in CII Phase III projects?"\n'

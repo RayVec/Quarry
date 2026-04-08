@@ -55,6 +55,8 @@ def test_decomposition_prompt_uses_search_ready_facet_instructions() -> None:
     assert '"How does Advanced Work Packaging affect project cost performance?"' in prompt
     assert '{"facets": ["sub-query 1", "sub-query 2", ...]}' in prompt
     assert "The first character of your response must be '{' and there must be no prefix text." in prompt
+    assert "include bridge-aware coverage" in prompt
+    assert 'Query: "What standard governs the material used in the bridge described in RT-361?"' in prompt
 
 
 def test_shared_system_prompt_covers_domain_format_grounding_and_verbatim_rules() -> None:

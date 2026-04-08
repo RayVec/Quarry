@@ -28,6 +28,7 @@ class HybridRetriever:
     SINGLE_HOP_SPARSE_TOP_K = 12
     SINGLE_HOP_DENSE_TOP_K = 12
     SINGLE_HOP_RERANK_TOP_K = 8
+    MULTIHOP_FOLLOWUP_RERANK_TOP_K = 10
 
     def __init__(
         self,
@@ -39,6 +40,8 @@ class HybridRetriever:
         dense_top_k: int,
         rerank_top_k: int,
         rrf_k: int,
+        multihop_anchor_pool_size: int = 40,
+        multihop_rerank_budget: int = 20,
     ) -> None:
         self.sparse_retriever = sparse_retriever
         self.dense_retriever = dense_retriever
@@ -46,6 +49,8 @@ class HybridRetriever:
         self.sparse_top_k = sparse_top_k
         self.dense_top_k = dense_top_k
         self.rerank_top_k = rerank_top_k
+        self.multihop_anchor_pool_size = multihop_anchor_pool_size
+        self.multihop_rerank_budget = multihop_rerank_budget
         self.rrf_k = rrf_k
 
     async def retrieve(
@@ -57,6 +62,7 @@ class HybridRetriever:
     ) -> tuple[list[RetrievedPassage], list[FacetRetrievalDiagnostic]]:
         retrieval_start = timed()
         sparse_top_k, dense_top_k, rerank_top_k = self._resolve_limits(query_type)
+        is_multi_hop = self._is_multi_hop(query_type)
         logger.info(
             "hybrid retrieval started",
             extra={
@@ -79,13 +85,24 @@ class HybridRetriever:
             diagnostics.append(diagnostic)
             for passage in passages:
                 existing = merged.get(passage.chunk.chunk_id)
-                if existing is None or passage.score > existing.score:
-                    merged[passage.chunk.chunk_id] = passage
-        reranked = await self.reranker.rerank(original_query, list(merged.values()))
+                if existing is None:
+                    merged[passage.chunk.chunk_id] = passage.model_copy(update={"source_facets": list(dict.fromkeys(passage.source_facets or [passage.source_facet]))})
+                    continue
+                merged_facets = list(dict.fromkeys([*(existing.source_facets or [existing.source_facet]), *(passage.source_facets or [passage.source_facet])]))
+                if passage.score > existing.score:
+                    merged[passage.chunk.chunk_id] = passage.model_copy(update={"source_facets": merged_facets})
+                else:
+                    merged[passage.chunk.chunk_id] = existing.model_copy(update={"source_facets": merged_facets})
+        rerank_candidates = list(merged.values())
+        rerank_candidates.sort(key=lambda item: item.score, reverse=True)
+        if is_multi_hop and len(rerank_candidates) > self.multihop_anchor_pool_size:
+            rerank_candidates = rerank_candidates[: self.multihop_anchor_pool_size]
+        reranked = await self.reranker.rerank(original_query, rerank_candidates)
         logger.info(
             "hybrid retrieval complete",
             extra={
                 "merged_candidate_count": len(merged),
+                "rerank_candidate_count": len(rerank_candidates),
                 "reranked_count": len(reranked),
                 "top_chunk_ids": [passage.chunk.chunk_id for passage in reranked[:5]],
                 "latency_ms": elapsed_ms(retrieval_start),
@@ -93,6 +110,24 @@ class HybridRetriever:
             },
         )
         return reranked[:rerank_top_k], diagnostics
+
+    async def retrieve_followup(
+        self,
+        *,
+        original_query: str,
+        facet: str,
+        query_type: QueryType | str | None = None,
+    ) -> tuple[list[RetrievedPassage], FacetRetrievalDiagnostic]:
+        sparse_top_k, dense_top_k, _ = self._resolve_limits(query_type)
+        fused, diagnostic = await self._retrieve_facet(
+            facet,
+            sparse_top_k=sparse_top_k,
+            dense_top_k=dense_top_k,
+        )
+        reranked = await self.reranker.rerank(original_query, fused)
+        return reranked[: self.MULTIHOP_FOLLOWUP_RERANK_TOP_K], diagnostic.model_copy(
+            update={"reranked_count": min(len(reranked), self.MULTIHOP_FOLLOWUP_RERANK_TOP_K)}
+        )
 
     async def scoped_retrieve(
         self,
@@ -177,6 +212,14 @@ class HybridRetriever:
             retriever_name="dense",
         )
         (sparse_results, sparse_meta), (dense_results, dense_meta) = await asyncio.gather(sparse_task, dense_task)
+        sparse_results = [
+            passage.model_copy(update={"source_facets": [facet]})
+            for passage in sparse_results
+        ]
+        dense_results = [
+            passage.model_copy(update={"source_facets": [facet]})
+            for passage in dense_results
+        ]
         fused = reciprocal_rank_fusion([sparse_results, dense_results], rrf_k=self.rrf_k)
         diagnostic = FacetRetrievalDiagnostic(
             facet=facet,
@@ -211,7 +254,15 @@ class HybridRetriever:
                 min(self.dense_top_k, self.SINGLE_HOP_DENSE_TOP_K),
                 min(self.rerank_top_k, self.SINGLE_HOP_RERANK_TOP_K),
             )
-        return self.sparse_top_k, self.dense_top_k, self.rerank_top_k
+        return (
+            self.sparse_top_k,
+            self.dense_top_k,
+            min(self.multihop_rerank_budget, self.rerank_top_k),
+        )
+
+    def _is_multi_hop(self, query_type: QueryType | str | None) -> bool:
+        raw_query_type = query_type.value if isinstance(query_type, QueryType) else query_type
+        return raw_query_type == QueryType.MULTI_HOP.value
 
     async def _safe_search(
         self,
@@ -281,6 +332,7 @@ def build_citation_index(passages: Sequence[RetrievedPassage], *, starting_id: i
                 page_end=chunk.page_end,
                 retrieval_score=passage.score,
                 source_facet=passage.source_facet,
+                source_facets=passage.source_facets or [passage.source_facet],
                 ambiguity_review_required=top_result_is_ambiguous,
                 ambiguity_gap=gap if offset == 0 else None,
                 retrieval_scores={passage.retriever: passage.score},

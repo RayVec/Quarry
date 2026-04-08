@@ -281,6 +281,11 @@ This supports real backend-driven waiting states through these `SessionState` fi
 - `query_stage_label`
 - `query_stage_detail`
 
+Additional stages for multi-hop coverage-repair flow:
+
+- `coverage_check` — label: "Checking evidence coverage"
+- `followup_retrieval` — label: "Retrieving additional evidence"
+
 ### 7.3 Query understanding
 
 `src/quarry/pipeline/decomposition.py` implements heuristic-only classification.
@@ -306,7 +311,16 @@ Current steps:
 - reranking
 - citation index construction
 
-For **single-hop** queries, `HybridRetriever._resolve_limits` caps retrieval at **12 / 12 / 8** (sparse / dense / rerank) by taking the **minimum** of those caps and the configured `sparse_top_k`, `dense_top_k`, and `rerank_top_k` (defaults in `Settings` are 30 / 30 / 20). Multi-hop queries use the full configured budgets.
+For **single-hop** queries, `HybridRetriever._resolve_limits` caps retrieval at **12 / 12 / 8** (sparse / dense / rerank) by taking the **minimum** of those caps and the configured `sparse_top_k`, `dense_top_k`, and `rerank_top_k` (defaults in `Settings` are 30 / 30 / 20).
+
+For **multi-hop** queries, retrieval now keeps a wider anchored pre-rerank pool:
+
+- per-facet sparse/dense stays at configured defaults (typically 30/30)
+- fused candidates across all facets are merged into an anchored pool capped by `multihop_anchor_pool_size` (default **40**)
+- reranked output used for citation-index construction is capped by `multihop_rerank_budget` (default **20**)
+- every passage/citation preserves facet provenance as:
+  - `source_facet`: primary facet (backward-compatible)
+  - `source_facets`: all facets that surfaced that chunk
 
 This reduces latency and often improves precision by cutting noise on narrow questions.
 
@@ -342,6 +356,7 @@ These parsed sentences become the reviewable unit in the UI.
 - quote discovery
 - sentence status assignment
 - NLI confidence scoring
+- post-generation facet coverage check (after exact-match quote resolution)
 
 Runtime optimization (behavior-preserving):
 
@@ -361,6 +376,8 @@ The trust model is:
 
 1. the quote must exist in the source text
 2. the verified citation must still semantically support the sentence
+
+For multi-hop queries, verification now also computes a facet coverage signal after exact-match resolution: if no resolved citation maps back to chunks surfaced by a facet, that facet is marked as a gap for optional one-round follow-up retrieval.
 
 Default exact-match policy requires at least 10 words for a quoted anchor. Regenerated references can opt into a shorter minimum (currently 8 words) so sentence repair has more room to produce clear prose without losing exact-text verification.
 

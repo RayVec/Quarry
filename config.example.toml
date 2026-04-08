@@ -118,3 +118,22 @@ primary = "mlx_vlm"
 
 # Parser used when the primary fails on a page
 fallback = "pymupdf_text"
+
+
+# ------------------------------------
+# Retrieval budgets
+# ------------------------------------
+[retrieval]
+
+# Per-facet retrieval budgets (sparse+dense) before fusion/rerank
+sparse_top_k = 30
+dense_top_k = 30
+
+# Global rerank cap (single-hop remains capped lower in code)
+rerank_top_k = 20
+
+# Multi-hop anchored pool: top fused candidates retained before rerank
+multihop_anchor_pool_size = 40
+
+# Multi-hop rerank output budget for citation-index construction
+multihop_rerank_budget = 20

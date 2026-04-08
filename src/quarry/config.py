@@ -86,6 +86,8 @@ def load_file_config(config_path: str | Path | None = None) -> dict[str, object]
             "sparse_top_k": "sparse_top_k",
             "dense_top_k": "dense_top_k",
             "rerank_top_k": "rerank_top_k",
+            "multihop_anchor_pool_size": "multihop_anchor_pool_size",
+            "multihop_rerank_budget": "multihop_rerank_budget",
             "max_facets": "max_facets",
             "retrieval_rrf_k": "retrieval_rrf_k",
             "scoped_retrieval_top_k": "scoped_retrieval_top_k",
@@ -188,6 +190,8 @@ class Settings:
     sparse_top_k: int = 30
     dense_top_k: int = 30
     rerank_top_k: int = 20
+    multihop_anchor_pool_size: int = 40
+    multihop_rerank_budget: int = 20
     max_facets: int = 4
     retrieval_rrf_k: int = 60
     scoped_retrieval_top_k: int = 3
@@ -258,6 +262,18 @@ class Settings:
             sparse_top_k=int(os.getenv("QUARRY_SPARSE_TOP_K", str(_config_value(file_config, "sparse_top_k", 30)))),
             dense_top_k=int(os.getenv("QUARRY_DENSE_TOP_K", str(_config_value(file_config, "dense_top_k", 30)))),
             rerank_top_k=int(os.getenv("QUARRY_RERANK_TOP_K", str(_config_value(file_config, "rerank_top_k", 20)))),
+            multihop_anchor_pool_size=int(
+                os.getenv(
+                    "QUARRY_MULTIHOP_ANCHOR_POOL_SIZE",
+                    str(_config_value(file_config, "multihop_anchor_pool_size", 40)),
+                )
+            ),
+            multihop_rerank_budget=int(
+                os.getenv(
+                    "QUARRY_MULTIHOP_RERANK_BUDGET",
+                    str(_config_value(file_config, "multihop_rerank_budget", 20)),
+                )
+            ),
             max_facets=int(os.getenv("QUARRY_MAX_FACETS", str(_config_value(file_config, "max_facets", 4)))),
             retrieval_rrf_k=int(os.getenv("QUARRY_RRF_K", str(_config_value(file_config, "retrieval_rrf_k", 60)))),
             scoped_retrieval_top_k=int(os.getenv("QUARRY_SCOPED_TOP_K", str(_config_value(file_config, "scoped_retrieval_top_k", 3)))),

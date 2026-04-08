@@ -134,3 +134,19 @@ def test_invalid_llm_provider_is_rejected(monkeypatch) -> None:
 
     with pytest.raises(ValueError, match="Unsupported QUARRY hosted LLM provider"):
         Settings.from_env()
+
+
+def test_settings_supports_multihop_retrieval_budgets_from_toml(tmp_path) -> None:
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        """
+[retrieval]
+multihop_anchor_pool_size = 44
+multihop_rerank_budget = 22
+"""
+    )
+
+    settings = Settings.from_env(config_path=config_path)
+
+    assert settings.multihop_anchor_pool_size == 44
+    assert settings.multihop_rerank_budget == 22

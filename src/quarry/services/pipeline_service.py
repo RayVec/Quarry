@@ -51,6 +51,7 @@ class PipelineService:
     REGENERATION_SIMILARITY_THRESHOLD = 0.8
     REGENERATION_MIN_QUOTE_WORDS = 8
     REFINE_PROMPT_WINDOW_RATIO = 0.8
+    FOLLOWUP_SCORE_FLOOR_RATIO = 0.5
 
     def __init__(
         self,
@@ -323,7 +324,14 @@ class PipelineService:
             label="Checking the answer against the reports",
             detail="I'm making sure the wording still matches the source text before I show it.",
         )
-        final_response, parsed_sentences, citation_index, removed_sentence_count = await self._process_response(raw_response, citation_index)
+        final_response, parsed_sentences, citation_index, removed_sentence_count = await self._process_response(
+            raw_response,
+            citation_index,
+            session=base_session,
+            facets=decomposition.facets,
+            query_type=decomposition.query_type,
+            original_query=request.query,
+        )
         base_session.generated_response = final_response
         base_session.parsed_sentences = parsed_sentences
         base_session.citation_index = citation_index
@@ -494,6 +502,7 @@ class PipelineService:
                 page_end=chunk.page_end,
                 retrieval_score=0.0,
                 source_facet="alternative_fallback",
+                source_facets=["alternative_fallback"],
             )
             for index, chunk in enumerate(fallback_candidates)
         ]
@@ -574,6 +583,7 @@ class PipelineService:
                 page_end=chunk.page_end,
                 retrieval_score=0.0,
                 source_facet="scoped_fallback",
+                source_facets=["scoped_fallback"],
             )
             for index, chunk in enumerate(fallback_candidates)
         ]
@@ -839,6 +849,11 @@ class PipelineService:
         self,
         raw_response: str,
         citation_index: list[CitationIndexEntry],
+        *,
+        session: SessionState,
+        facets: list[str],
+        query_type: QueryType,
+        original_query: str,
     ) -> tuple[str, list, list[CitationIndexEntry], int]:
         process_start = timed()
         parsed_sentences = parse_generated_response(raw_response)
@@ -860,6 +875,86 @@ class PipelineService:
                 "citation_count": len(updated_citations),
             },
         )
+
+        if query_type == QueryType.MULTI_HOP:
+            coverage = self.verifier.check_facet_coverage(
+                facets=facets,
+                parsed_sentences=parsed_sentences,
+                citation_index=updated_citations,
+            )
+            logger.info(
+                "coverage check complete",
+                extra={
+                    "covered_facets": coverage.covered_facets,
+                    "gap_facets": coverage.gap_facets,
+                    "trigger_followup": coverage.trigger_followup,
+                    "console_visible": False,
+                },
+            )
+            if coverage.trigger_followup:
+                self._save_stage(
+                    session,
+                    status=QueryRunStatus.RUNNING,
+                    stage=QueryProgressStage.COVERAGE_CHECK,
+                    label="Checking evidence coverage",
+                    detail="I'm checking whether each facet is supported by cited evidence.",
+                )
+                score_floor = self._relative_score_floor(updated_citations)
+                followup_facet = self._select_followup_facet(
+                    coverage.gap_facets,
+                    updated_citations,
+                    score_floor=score_floor,
+                )
+                if followup_facet:
+                    self._save_stage(
+                        session,
+                        status=QueryRunStatus.RUNNING,
+                        stage=QueryProgressStage.FOLLOWUP_RETRIEVAL,
+                        label="Retrieving additional evidence",
+                        detail="I'm pulling in more evidence for an uncovered facet.",
+                    )
+                    followup_passages, _diagnostic = await self.hybrid_retriever.retrieve_followup(
+                        original_query=original_query,
+                        facet=followup_facet,
+                        query_type=query_type,
+                    )
+                    eligible_followup = [
+                        passage
+                        for passage in followup_passages
+                        if score_floor is None or passage.score >= score_floor
+                    ]
+                    if eligible_followup:
+                        followup_citations = build_citation_index(
+                            eligible_followup,
+                            starting_id=max((citation.citation_id for citation in updated_citations), default=0) + 1,
+                            ambiguity_gap_threshold=self.ambiguity_gap_threshold,
+                        )
+                        merged_citations = self._append_unique_citations(updated_citations, followup_citations)
+                        supplement_request = GenerationRequest(
+                            original_query=original_query,
+                            facets=facets,
+                            citation_index=self._trim_citations_to_budget(merged_citations),
+                            mode="supplement",
+                            existing_response=raw_response,
+                            selected_facets=[followup_facet],
+                        )
+                        supplement_raw = await self._generate_with_retry(supplement_request)
+                        if supplement_raw:
+                            supplement_sentences = parse_generated_response(supplement_raw)
+                            if supplement_sentences:
+                                next_index = len(parsed_sentences)
+                                for sentence in supplement_sentences:
+                                    sentence.sentence_index = next_index
+                                    next_index += 1
+                                parsed_sentences.extend(supplement_sentences)
+                                verification = self.verifier.verify_exact_matches(
+                                    parsed_sentences,
+                                    merged_citations,
+                                    sentence_indices={sentence.sentence_index for sentence in supplement_sentences},
+                                )
+                                parsed_sentences = verification.parsed_sentences
+                                updated_citations = verification.citation_index
+                                raw_response = "\n\n".join([raw_response.strip(), supplement_raw.strip()]).strip()
 
         exhausted_regeneration_indices: set[int] = set()
         failed_regeneration_outputs: dict[int, str] = {}
@@ -968,6 +1063,43 @@ class PipelineService:
         )
         return render_parsed_sentences(parsed_sentences), parsed_sentences, updated_citations, removed_sentence_count
 
+    def _select_followup_facet(
+        self,
+        gap_facets: list[str],
+        citation_index: list[CitationIndexEntry],
+        *,
+        score_floor: float | None,
+    ) -> str | None:
+        if not gap_facets:
+            return None
+        best_facet = None
+        best_score = float("-inf")
+        for facet in gap_facets:
+            scores = [
+                citation.retrieval_score
+                for citation in citation_index
+                if facet in (citation.source_facets or [citation.source_facet])
+            ]
+            if not scores:
+                continue
+            facet_score = max(scores)
+            if facet_score > best_score:
+                best_score = facet_score
+                best_facet = facet
+        if best_facet is None:
+            return None
+        if score_floor is not None and best_score < score_floor:
+            return None
+        return best_facet
+
+    def _relative_score_floor(self, citations: list[CitationIndexEntry]) -> float | None:
+        if not citations:
+            return None
+        top_score = max((citation.retrieval_score for citation in citations), default=0.0)
+        if top_score <= 0:
+            return None
+        return top_score * self.FOLLOWUP_SCORE_FLOOR_RATIO
+
     def _select_regeneration_replacement(self, replacements: list[ParsedSentence]) -> ParsedSentence | None:
         usable = [sentence for sentence in replacements if sentence.sentence_text.strip()]
         if not usable:
@@ -1001,13 +1133,18 @@ class PipelineService:
 
     def _append_unique_citations(self, existing: list[CitationIndexEntry], candidate_citations: list[CitationIndexEntry]) -> list[CitationIndexEntry]:
         merged = list(existing)
-        seen_chunk_ids = {citation.chunk_id for citation in existing}
+        by_chunk_id = {citation.chunk_id: citation for citation in merged}
         next_id = max((citation.citation_id for citation in existing), default=0) + 1
         for citation in candidate_citations:
-            if citation.chunk_id in seen_chunk_ids:
+            existing_citation = by_chunk_id.get(citation.chunk_id)
+            if existing_citation is not None:
+                existing_citation.source_facets = list(
+                    dict.fromkeys([*existing_citation.source_facets, *citation.source_facets])
+                )
                 continue
-            merged.append(citation.model_copy(update={"citation_id": next_id}))
-            seen_chunk_ids.add(citation.chunk_id)
+            new_citation = citation.model_copy(update={"citation_id": next_id})
+            merged.append(new_citation)
+            by_chunk_id[new_citation.chunk_id] = new_citation
             next_id += 1
         return merged
 

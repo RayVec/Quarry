@@ -308,3 +308,53 @@ def test_verifier_quote_lookup_metrics_with_fallback() -> None:
     assert verifier.quote_lookup_metrics["full_corpus_fallbacks"] == 1.0
     assert verifier.quote_lookup_metrics["quote_match_rate"] == 1.0
     assert verifier.quote_lookup_metrics["avg_candidates_checked"] == 2.0
+
+
+def test_check_facet_coverage_detects_gap_facets() -> None:
+    chunk_a = build_chunk(
+        "fa",
+        "Prefabricated modular approaches led to a 23 percent decrease in overall schedule duration across Phase III projects and improved coordination discipline.",
+    )
+    store = InMemoryChunkStore([chunk_a])
+    verifier = VerificationService(chunk_store=store, nli_client=HeuristicNLIClient())
+    parsed = [
+        ParsedSentence(
+            sentence_index=0,
+            sentence_text="Modular approaches improved coordination discipline.",
+            sentence_type=SentenceType.CLAIM,
+            references=[
+                Reference(
+                    reference_quote=chunk_a.text,
+                    matched_chunk_id="fa",
+                    verified=True,
+                    citation_id=1,
+                )
+            ],
+            status=SentenceStatus.UNCHECKED,
+        )
+    ]
+    citations = [
+        CitationIndexEntry(
+            citation_id=1,
+            chunk_id="fa",
+            text=chunk_a.text,
+            document_id=chunk_a.document_id,
+            document_title=chunk_a.document_title,
+            section_heading=chunk_a.section_heading,
+            section_path=chunk_a.section_path,
+            page_number=chunk_a.page_start,
+            retrieval_score=0.9,
+            source_facet="schedule",
+            source_facets=["schedule"],
+        )
+    ]
+
+    result = verifier.check_facet_coverage(
+        facets=["schedule", "procurement"],
+        parsed_sentences=parsed,
+        citation_index=citations,
+    )
+
+    assert result.covered_facets == ["schedule"]
+    assert result.gap_facets == ["procurement"]
+    assert result.trigger_followup is True

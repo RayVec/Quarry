@@ -66,6 +66,8 @@ class QueryProgressStage(str, Enum):
     SEARCHING = "searching"
     EVIDENCE = "evidence"
     WRITING = "writing"
+    COVERAGE_CHECK = "coverage_check"
+    FOLLOWUP_RETRIEVAL = "followup_retrieval"
     CHECKING = "checking"
     COMPLETED = "completed"
     FAILED = "failed"
@@ -137,6 +139,7 @@ class CitationIndexEntry(BaseModel):
     page_end: int | None = None
     retrieval_score: float
     source_facet: str
+    source_facets: list[str] = Field(default_factory=list)
     replacement_pending: bool = False
     reviewer_note: str | None = None
     ambiguity_review_required: bool = False
@@ -314,6 +317,7 @@ class RetrievedPassage(BaseModel):
     chunk: ChunkObject
     score: float
     source_facet: str
+    source_facets: list[str] = Field(default_factory=list)
     rank: int
     retriever: Literal["sparse", "dense", "reranked", "scoped"] = "sparse"
 
@@ -321,6 +325,12 @@ class RetrievedPassage(BaseModel):
 class VerificationResult(BaseModel):
     parsed_sentences: list[ParsedSentence]
     citation_index: list[CitationIndexEntry]
+
+
+class CoverageCheckResult(BaseModel):
+    covered_facets: list[str] = Field(default_factory=list)
+    gap_facets: list[str] = Field(default_factory=list)
+    trigger_followup: bool = False
 
 
 class GenerationRequest(BaseModel):

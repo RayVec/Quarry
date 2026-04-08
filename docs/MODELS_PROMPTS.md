@@ -163,7 +163,14 @@ QUARRY uses:
 - reciprocal rank fusion
 - reranking on the merged candidate set
 
-For obvious single-hop queries, retrieval budgets are smaller than for multi-hop queries.
+For obvious single-hop queries, retrieval budgets are smaller than for multi-hop queries (12/12/8 caps).
+
+For multi-hop queries, retrieval uses a widened anchored pool strategy:
+
+- per-facet sparse/dense budgets remain the configured defaults (typically 30/30)
+- merged fused candidates are capped by `retrieval.multihop_anchor_pool_size` (default 40) before reranking
+- final multi-hop rerank output is capped by `retrieval.multihop_rerank_budget` (default 20)
+- retrieved passages carry both `source_facet` and `source_facets` provenance for downstream coverage checks
 
 ## 5. Hosted Generation
 
@@ -244,6 +251,8 @@ QUARRY currently uses prompt-driven model calls for:
 **Not model-driven in current runtime:** query **classification** is handled only by heuristics in `QueryDecomposer` (see §9). There is no live call to `decomposition_classification_prompt`.
 
 Not every query uses every prompt. Some stages short-circuit heuristically before calling a model.
+
+The decomposition prompt now includes bridge-aware guidance: when a query links two entities through a relationship, generate one facet per entity plus one facet for the connecting relationship when appropriate.
 
 ## 8. Shared System Prompt
 
