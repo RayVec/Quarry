@@ -825,3 +825,48 @@ def test_refine_request_uses_pair_scoped_feedback_with_dislike_precedence() -> N
     assert refine_request.mismatch_citation_ids == [1]
     assert all(citation.citation_id != 1 for citation in refine_request.citation_index)
     assert any(citation.citation_id == 2 for citation in refine_request.citation_index)
+
+
+def test_refine_does_not_globally_poison_shared_citation_with_mixed_pair_feedback() -> None:
+    chunks = build_many_chunks(12)
+    chunk_store = InMemoryChunkStore(chunks)
+    retriever = StaticHybridRetriever(
+        [
+            RetrievedPassage(chunk=chunk, score=float(200 - index), source_facet="facet", rank=index + 1, retriever="reranked")
+            for index, chunk in enumerate(chunks)
+        ]
+    )
+    generator = PassThroughRefineGenerationClient()
+    service = PipelineService(
+        chunk_store=chunk_store,
+        query_decomposer=QueryDecomposer(HeuristicDecompositionClient(), max_facets=4),
+        hybrid_retriever=retriever,
+        answer_generator=AnswerGenerator(generator),
+        sentence_regenerator=SentenceRegenerator(),
+        verifier=VerificationService(chunk_store=chunk_store, nli_client=HeuristicNLIClient()),
+        session_store=SessionStore(),
+        scoped_top_k=3,
+        refinement_token_budget=100,
+        ambiguity_gap_threshold=0.05,
+    )
+
+    session = asyncio.run(service.run_query(QueryRequest(query="What is PDRI maturity?")))
+    session = service.add_review_comment(
+        session.session_id,
+        ReviewCommentRequest(
+            text_selection="PDRI maturity",
+            char_start=0,
+            char_end=12,
+            comment_text="Please revise wording.",
+        ),
+    )
+    session = service.set_citation_feedback(session.session_id, 0, 7, CitationFeedbackType.DISLIKE)
+    session = service.set_citation_feedback(session.session_id, 1, 7, CitationFeedbackType.LIKE)
+
+    _refined = asyncio.run(service.refine(session.session_id))
+    refine_request = [request for request in generator.requests if request.mode == "refinement"][0]
+
+    assert {(pair.sentence_index, pair.citation_id) for pair in refine_request.rejected_pairs} == {(0, 7)}
+    assert {(pair.sentence_index, pair.citation_id) for pair in refine_request.approved_pairs} == {(1, 7)}
+    assert refine_request.mismatch_citation_ids == []
+    assert any(citation.citation_id == 7 for citation in refine_request.citation_index)

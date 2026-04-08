@@ -657,7 +657,9 @@ class PipelineService:
             if fb.feedback_type == CitationFeedbackType.LIKE
             and (fb.sentence_index, fb.citation_id) not in rejected_pair_set
         ]
-        disliked_citation_ids = sorted({pair.citation_id for pair in rejected_pairs})
+        rejected_citation_ids = {pair.citation_id for pair in rejected_pairs}
+        approved_citation_ids = {pair.citation_id for pair in approved_pairs}
+        globally_rejected_citation_ids = sorted(rejected_citation_ids - approved_citation_ids)
 
         selection_comments = [comment for comment in session.feedback.comments if not comment.resolved]
         logger.info(
@@ -670,7 +672,7 @@ class PipelineService:
                 "approved_pairs": len(approved_pairs),
             },
         )
-        if not selection_comments and not disliked_citation_ids:
+        if not selection_comments and not rejected_pairs:
             logger.info(
                 "refinement no-op",
                 extra={
@@ -688,7 +690,7 @@ class PipelineService:
             ]
 
             citations_for_refinement = [
-                c for c in working_citations if c.citation_id not in disliked_citation_ids
+                c for c in working_citations if c.citation_id not in globally_rejected_citation_ids
             ]
 
             refine_request = GenerationRequest(
@@ -705,7 +707,7 @@ class PipelineService:
                 ],
                 disagreement_notes=comment_lines,
                 disagreement_contexts=[],
-                mismatch_citation_ids=disliked_citation_ids,
+                mismatch_citation_ids=globally_rejected_citation_ids,
                 approved_pairs=approved_pairs,
                 rejected_pairs=rejected_pairs,
             )
