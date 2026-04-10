@@ -2,8 +2,6 @@
 
 A local-first retrieval and review system for technical grey literature. Ingest your PDF corpus, ask questions, and get answers where every sentence is grounded in a verbatim quote from the source — verified automatically.
 
-**Interactive citation feedback:** Like or dislike citations with a single click. Disliked citations trigger automatic alternative suggestions from source documents, which you can optionally use to replace them. All feedback is integrated into the refinement process.
-
 Runs on Apple Silicon (MLX) or any CUDA GPU. No database, no cloud dependency. Optionally connect a hosted LLM for better generation quality while keeping retrieval, parsing, and verification fully local.
 
 ---
