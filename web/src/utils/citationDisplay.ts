@@ -1,5 +1,6 @@
 import type { SessionState } from "../types";
 
+/** Internal `citation_id` → 1-based display index by order of first reference in `parsed_sentences`. */
 export function buildDisplayCitationMap(session: SessionState): Map<number, number> {
   const displayByCitationId = new Map<number, number>();
   let nextDisplayId = 1;

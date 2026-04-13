@@ -673,10 +673,8 @@ export function ResponseReview({
                             }
                             type="button"
                           >
-                            [
                             {displayCitationMap.get(reference.citation_id) ??
                               reference.citation_id}
-                            ]
                             {feedback === "like" && (
                               <ThumbsUp
                                 aria-label="Liked"

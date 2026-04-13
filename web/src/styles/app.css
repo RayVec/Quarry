@@ -373,7 +373,7 @@
 
 .recent-research-item {
   text-align: left;
-  padding: 0.9rem 0.85rem;
+  padding: 0;
   border-radius: var(--radius-lg);
   background: transparent;
   color: var(--on-surface);
@@ -386,8 +386,12 @@
   text-align: left;
   color: inherit;
   background: transparent;
-  padding: 0 1rem 0 0;
+  padding: 0.9rem 2.35rem 0.9rem 0.85rem;
   display: grid;
+  align-content: start;
+  justify-content: start;
+  align-items: start;
+  justify-items: start;
   gap: 0.45rem;
   width: 100%;
   min-width: 0;
@@ -445,6 +449,7 @@
 }
 
 .recent-research-item span {
+  justify-self: start;
   color: var(--muted-soft);
   font-size: 0.72rem;
   font-weight: 700;
@@ -1128,20 +1133,28 @@
 .citation-pill {
   display: inline-flex;
   align-items: center;
-  padding: 0.18rem 0.42rem;
-  margin-left: 0.3rem;
-  margin-right: 0.5rem;
+  block-size: 1.5rem;
+  min-block-size: 1.5rem;
+  padding: 0 0.38rem;
+  margin-left: 0.24rem;
+  margin-right: 0.38rem;
   cursor: pointer;
   border-radius: var(--radius-sm);
   background: var(--primary-fixed);
   color: var(--primary);
-  font-size: 0.82rem;
+  font-size: 0.76rem;
   font-weight: 700;
+  line-height: 1;
   vertical-align: middle;
   transition:
     background-color 180ms ease,
     transform 180ms ease,
     box-shadow 180ms ease;
+}
+
+.citation-pill svg {
+  width: 0.82rem;
+  height: 0.82rem;
 }
 
 .citation-pill--strong {
@@ -1187,7 +1200,8 @@
   display: none;
   flex-direction: column;
   gap: 0;
-  width: min(16.7rem, 56vw);
+  inline-size: min(18rem, calc(100vw - 1rem));
+  max-inline-size: calc(100vw - 1rem);
   padding: 0.55rem 0.68rem;
   border-radius: 0.35rem;
   background: rgba(15, 23, 42, 0.88);
@@ -1196,6 +1210,8 @@
   font-weight: 400;
   line-height: 1.3;
   text-align: left;
+  white-space: normal;
+  text-wrap: pretty;
   box-shadow: 0 8px 24px rgba(15, 23, 42, 0.28);
   opacity: 0;
   visibility: hidden;
@@ -1207,7 +1223,7 @@
 .citation-pill-tooltip-doc,
 .citation-pill-tooltip-match {
   word-break: break-word;
-  overflow-wrap: break-word;
+  overflow-wrap: anywhere;
 }
 
 .citation-pill-tooltip-rule {

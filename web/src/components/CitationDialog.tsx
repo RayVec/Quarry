@@ -14,7 +14,6 @@ import { Separator } from "@/components/ui/separator";
 import {
   Sheet,
   SheetContent,
-  SheetDescription,
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
@@ -307,13 +306,10 @@ export function CitationDialog({
         side="right"
       >
         <SheetHeader className="gap-3 px-8 pt-8 pb-6">
-          <span className="eyebrow">Citation [{displayCitationId}]</span>
+          <span className="eyebrow">Citation {displayCitationId}</span>
           <SheetTitle className="text-3xl font-semibold tracking-tight text-foreground">
             Review citation support
           </SheetTitle>
-          <SheetDescription>
-            Inspect the supporting passage, match quality, and citation feedback for this sentence.
-          </SheetDescription>
         </SheetHeader>
 
         <div

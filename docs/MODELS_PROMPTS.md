@@ -258,9 +258,12 @@ The decomposition prompt now includes bridge-aware guidance: when a query links 
 
 The shared system prompt establishes rules that are true across all tasks:
 
-- QUARRY is a research assistant for technical construction reports
+- QUARRY is a grounded research assistant for technical reports
 - output formats must be followed exactly
 - factual statements must be grounded in supplied text
+- the answer should be written in the user's language unless another language is requested
+- prose should be clear, natural, concise, and logically ordered
+- source formatting such as bullets, checklists, field labels, table fragments, and OCR noise should not be imitated
 - quotes must be copied verbatim
 
 It is defined in:
@@ -361,8 +364,9 @@ The current prompt is intentionally context-first:
 6. reviewer feedback, if applicable
 7. previous malformed output, if applicable
 8. writing task guidance
-9. citation and tagging format rules
-10. mode-specific instruction
+9. source-handling guidance for raw evidence
+10. citation and tagging format rules
+11. mode-specific instruction
 
 This ordering is meant to help the model understand what it is answering before it sees output-format constraints.
 
@@ -382,7 +386,7 @@ Rules:
 - `CLAIM`
   - one factual sentence
   - exactly one verbatim quote
-  - standard generation uses a 10 to 40 word quote anchor
+  - the sentence itself should be natural prose rather than copied source formatting
 - `SYNTHESIS`
   - combines evidence across passages
   - at least two verbatim quotes from different passages
@@ -417,7 +421,7 @@ Refinement mode tells the model:
 - The refinement request now carries pair-scoped `approved_pairs` and `rejected_pairs` so the prompt can reason about the same citation id in different sentence contexts.
 - `mismatch_citation_ids` is still populated for globally rejected citation ids, but only as a compatibility bridge. Mixed feedback for the same citation id should be represented through `approved_pairs` / `rejected_pairs`, not by broad mismatch taint.
 - Source passages for the request exclude globally rejected ids entirely, so their chunk text does not appear under **Source Passages**.
-- `## Reviewer Feedback` includes soft approval lines for `approved_pairs` and mismatch lines for globally rejected ids. Passage lines can still be prefixed with `[MISMATCH: …]` when a globally rejected id remains in the trimmed index.
+- `## Reviewer Feedback` includes soft approval lines for `approved_pairs` and mismatch lines for globally rejected ids. Source passages are rendered as structured evidence blocks (`Passage [id]`, `Section`, optional reviewer note/flag, `Raw evidence`) so the model treats them as evidence rather than answer prose.
 - Unresolved selection comments are also merged into **Reviewer Feedback** and into `disagreement_notes`-driven lines; refinement mode instructions additionally tell the model to preserve approved pairs only if they remain supported after rewriting.
 
 ### 12.5 Regeneration mode

@@ -6,20 +6,26 @@ from quarry.domain.models import ChunkObject, GenerationRequest
 
 
 SHARED_SYSTEM_PROMPT = (
-    "You are QUARRY, a research assistant that helps domain experts\n"
-    "locate and verify information from technical construction industry\n"
+    "You are QUARRY, a grounded research assistant for technical\n"
     "reports.\n\n"
-    "You always respond in the exact format requested. When asked for\n"
-    "JSON, return only valid JSON with no preamble, no markdown fences,\n"
-    "and no commentary. When asked for tagged sentences, use only the\n"
-    "tags specified ([CLAIM], [SYNTHESIS], [STRUCTURE]) with no\n"
-    "additional markup.\n\n"
-    "You never invent information. Every factual statement you make\n"
-    "must be traceable to text provided in the prompt. If you cannot\n"
-    "find supporting evidence, say so rather than fabricating content.\n\n"
-    "When quoting from source passages, copy the text exactly as it\n"
-    "appears. Do not paraphrase, truncate, rearrange, or correct\n"
-    "spelling or grammar in quoted material."
+    "Global rules:\n"
+    "- Use only source text provided in the prompt for factual content.\n"
+    "- If the evidence is missing, partial, or conflicting, say so\n"
+    "  plainly rather than inventing information.\n"
+    "- Follow the requested output format exactly. When asked for JSON,\n"
+    "  return only valid JSON with no preamble, no markdown fences, and\n"
+    "  no commentary. When asked for tagged sentences, use only the tags\n"
+    "  specified ([CLAIM], [SYNTHESIS], [STRUCTURE]) with no additional\n"
+    "  markup.\n"
+    "- Write in the user's language unless the prompt explicitly asks\n"
+    "  for another language.\n"
+    "- Write for a human reader: clear, natural, concise, and logically\n"
+    "  ordered.\n"
+    "- Do not imitate source formatting such as bullets, checklists,\n"
+    "  field labels, headings, table fragments, or OCR noise.\n"
+    "- When quoting from source passages, copy the quote exactly as it\n"
+    "  appears. Keep quotations verbatim, but write the surrounding\n"
+    "  prose as faithful natural language."
 )
 
 
@@ -116,9 +122,8 @@ def metadata_enrichment_prompt(chunk: ChunkObject) -> str:
 def generation_prompt(request: GenerationRequest) -> str:
     sections: list[str] = [
         (
-            "You are a research assistant helping a domain expert locate and verify\n"
-            "information from technical reports. Your job is to answer the query\n"
-            "using only the evidence provided in the passages below."
+            "You are preparing a grounded answer for a domain expert.\n"
+            "Use only the evidence provided in the source passages below."
         ),
         f"## Query\n{request.original_query}",
         "## Information Facets\n"
@@ -144,17 +149,30 @@ def generation_prompt(request: GenerationRequest) -> str:
 
     sections.append(
         "## Your Task\n\n"
-        "Read the passages carefully. Write a clear, well-organized response\n"
-        "that addresses the query by synthesizing evidence from the passages.\n\n"
-        "Organize your response so that:\n"
-        "- The most important finding or answer comes first\n"
-        "- Related points are grouped together rather than scattered\n"
-        "- Transitions between topics are natural\n"
-        "- If the query has multiple facets, address each one, but weave them\n"
-        "  into a coherent narrative rather than treating them as separate lists\n\n"
-        "When writing, think about what a domain expert would want to read:\n"
-        "direct answers supported by evidence, with enough context to understand\n"
-        "the significance, but no unnecessary filler."
+        "Read the passages carefully. Write the answer for a human reader,\n"
+        "not as a restatement of the raw source text.\n\n"
+        "Writing priorities:\n"
+        "- Start with the direct answer or most important finding\n"
+        "- Group related points together and keep the logic coherent from\n"
+        "  sentence to sentence and paragraph to paragraph\n"
+        "- Merge overlapping evidence instead of repeating the same point\n"
+        "  in slightly different words\n"
+        "- If multiple passages support the same point, prefer the clearest\n"
+        "  one unless another passage adds a distinct detail or contrast\n"
+        "- If the query has multiple facets, address each one, but weave\n"
+        "  them into a single coherent response rather than separate lists\n"
+        "- If evidence is partial, qualified, or conflicting, state that\n"
+        "  clearly\n"
+        "- Avoid filler, recap paragraphs, and repeated summaries that do\n"
+        "  not add new information"
+    )
+
+    sections.append(
+        "## Source Handling\n\n"
+        "The source passages are raw evidence, not answer prose. They may\n"
+        "contain checklist items, headings, field labels, table fragments,\n"
+        "or OCR noise. Treat them as evidence to interpret, not wording to\n"
+        "imitate. Convert supported points into complete, natural sentences."
     )
 
     sections.append(
@@ -164,15 +182,19 @@ def generation_prompt(request: GenerationRequest) -> str:
         "[PARA] is formatting only: it is not a sentence tag and must not include references.\n\n"
         "After writing each sentence, tag it and cite your evidence using\n"
         "exactly this format:\n\n"
-        "CLAIM sentences state a single fact drawn from one passage.\n"
+        "CLAIM sentences state one supported factual point drawn from one passage.\n"
         "Format: [CLAIM] Your sentence here. [REF: \"exact quote from passage\"]\n"
         "Each tagged block must contain exactly one natural-language sentence.\n"
         "If you need two sentences, emit two separately tagged blocks.\n"
+        "The sentence should be faithful natural prose.\n"
         "The quote must be copied verbatim from a passage.\n"
-        "For standard response generation, use 10 to 40 words with no\n"
-        "paraphrasing or truncation.\n\n"
+        "Do not copy bullet points, checklist items, headings, field labels,\n"
+        "table fragments, or chunk openings into the answer unless the user\n"
+        "explicitly asks for extraction.\n\n"
         "SYNTHESIS sentences connect findings across multiple passages.\n"
         "Format: [SYNTHESIS] Your sentence here. [REF: \"quote from passage A\"] [REF: \"quote from passage B\"]\n"
+        "Use synthesis only when combining evidence adds value instead of repeating\n"
+        "an earlier claim sentence.\n"
         "Each quote must be verbatim from a different passage.\n\n"
         "STRUCTURE sentences are transitions, framing, or introductions\n"
         "that make no factual claim.\n"
@@ -217,15 +239,21 @@ def parse_json_response(raw_text: str) -> dict[str, object]:
 
 
 def _format_citation_line(citation, mismatch_ids: list[int]) -> str:
-    prefix: list[str] = []
+    lines = [
+        f"Passage [{citation.citation_id}]",
+        f"Section: {citation.section_path}",
+    ]
     if citation.citation_id in mismatch_ids:
-        prefix.append(f"[MISMATCH: {citation.reviewer_note or 'reviewer flagged this passage'}]")
+        lines.append(
+            f"Reviewer flag: {citation.reviewer_note or 'Reviewer flagged this passage as a possible mismatch.'}"
+        )
+    elif citation.reviewer_note:
+        lines.append(f"Reviewer note: {citation.reviewer_note}")
     if citation.replacement_pending:
-        prefix.append("[REPLACED_PENDING_REGENERATION]")
-    if citation.reviewer_note and citation.citation_id not in mismatch_ids:
-        prefix.append(f"[NOTE: {citation.reviewer_note}]")
-    prefix_text = " ".join(prefix)
-    return f"{prefix_text} [{citation.citation_id}] ({citation.section_path}) {citation.text}".strip()
+        lines.append("Status: pending replacement regeneration")
+    lines.append("Raw evidence:")
+    lines.append(citation.text)
+    return "\n".join(lines).strip()
 
 
 def with_shared_system_prompt(prompt: str) -> str:

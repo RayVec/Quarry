@@ -37,12 +37,36 @@ def test_generation_prompt_places_context_and_task_before_citation_rules() -> No
     assert "- procurement delays" in prompt
     assert "## Source Passages" in prompt
     assert "## Your Task" in prompt
+    assert "## Source Handling" in prompt
     assert "## Citation Format" in prompt
-    assert prompt.index("## Source Passages") < prompt.index("## Your Task") < prompt.index("## Citation Format")
-    assert "The most important finding or answer comes first" in prompt
-    assert "For standard response generation, use 10 to 40 words" in prompt
+    assert prompt.index("## Source Passages") < prompt.index("## Your Task") < prompt.index("## Source Handling") < prompt.index("## Citation Format")
+    assert "Start with the direct answer or most important finding" in prompt
+    assert "Merge overlapping evidence instead of repeating the same point" in prompt
     assert "Insert a [PARA] marker when the topic shifts" in prompt
     assert "[PARA] is formatting only" in prompt
+    assert "Do not copy bullet points, checklist items, headings, field labels" in prompt
+
+
+def test_generation_prompt_formats_passages_as_structured_evidence_blocks() -> None:
+    request = GenerationRequest(
+        original_query="What are the main schedule risks?",
+        facets=["schedule drivers"],
+        citation_index=[
+            _citation(
+                1,
+                "Procurement packages that were locked late repeatedly disrupted installation windows.",
+                note="This passage may overstate the effect size.",
+            )
+        ],
+    )
+
+    prompt = generation_prompt(request)
+
+    assert "Passage [1]" in prompt
+    assert "Section: 1 Executive Summary" in prompt
+    assert "Reviewer note: This passage may overstate the effect size." in prompt
+    assert "Raw evidence:" in prompt
+    assert "[1] (1 Executive Summary)" not in prompt
 
 
 def test_decomposition_prompt_uses_search_ready_facet_instructions() -> None:
@@ -62,11 +86,11 @@ def test_decomposition_prompt_uses_search_ready_facet_instructions() -> None:
 def test_shared_system_prompt_covers_domain_format_grounding_and_verbatim_rules() -> None:
     wrapped = with_shared_system_prompt('Return JSON only: {"ok": true}')
 
-    assert "You are QUARRY, a research assistant that helps domain experts" in SHARED_SYSTEM_PROMPT
-    assert "technical construction industry" in SHARED_SYSTEM_PROMPT
-    assert "return only valid JSON" in SHARED_SYSTEM_PROMPT
-    assert "You never invent information." in SHARED_SYSTEM_PROMPT
-    assert "When quoting from source passages, copy the text exactly as it" in SHARED_SYSTEM_PROMPT
+    assert "You are QUARRY, a grounded research assistant for technical" in SHARED_SYSTEM_PROMPT
+    assert "Follow the requested output format exactly" in SHARED_SYSTEM_PROMPT
+    assert "Write in the user's language unless the prompt explicitly asks" in SHARED_SYSTEM_PROMPT
+    assert "Do not imitate source formatting such as bullets, checklists" in SHARED_SYSTEM_PROMPT
+    assert "copy the quote exactly as it" in SHARED_SYSTEM_PROMPT
     assert wrapped.startswith(SHARED_SYSTEM_PROMPT)
 
 
