@@ -29,10 +29,15 @@ export function ReviewPanel({
       <div className="feedback-action-row">
         <div className="feedback-stats-group">
           <div className="feedback-stats-text" data-testid="feedback-summary">
-            {commentCount} comments captured, {replacementCount} citation replacements pending.
-              {dislikedCitationCount ? ` · ${dislikedCitationCount} disliked citations` : ""}
+            {commentCount} comments captured, {replacementCount} citation
+            replacements pending.
+            {dislikedCitationCount
+              ? ` · ${dislikedCitationCount} disliked citations`
+              : ""}
             {resolvedCount ? ` · ${resolvedCount} resolved comments` : ""}
-            {removedSentenceCount ? ` · ${removedSentenceCount} unverified removed` : ""}
+            {removedSentenceCount
+              ? ` · ${removedSentenceCount} unverified removed`
+              : ""}
           </div>
         </div>
 

@@ -1,14 +1,28 @@
-import { startTransition, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import {
+  startTransition,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+} from "react";
 import { Cog, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { api } from "./api";
 import { CitationDialog } from "./components/CitationDialog";
-import { ConversationMessage, type AssistantMessageSource } from "./components/ConversationMessage";
+import {
+  ConversationMessage,
+  type AssistantMessageSource,
+} from "./components/ConversationMessage";
 import { DiagnosticsDrawer } from "./components/DiagnosticsDrawer";
 import { PendingConversationMessage } from "./components/PendingConversationMessage";
 import { QueryComposer } from "./components/QueryComposer";
-import { ThreadActionsProvider, type ThreadActions } from "./context/threadActions";
+import {
+  ThreadActionsProvider,
+  type ThreadActions,
+} from "./context/threadActions";
 import type {
   CitationIndexEntry,
   HostedProviderDescriptor,
@@ -40,7 +54,10 @@ type PendingAssistantThreadEntry = {
   session: SessionState | null;
 };
 
-type ThreadEntry = UserThreadEntry | AssistantThreadEntry | PendingAssistantThreadEntry;
+type ThreadEntry =
+  | UserThreadEntry
+  | AssistantThreadEntry
+  | PendingAssistantThreadEntry;
 
 interface PersistedThreadPayload {
   version: 1;
@@ -80,7 +97,11 @@ function makeId() {
   return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
-function assistantEntry(source: AssistantMessageSource, session: SessionState, interactive: boolean): AssistantThreadEntry {
+function assistantEntry(
+  source: AssistantMessageSource,
+  session: SessionState,
+  interactive: boolean,
+): AssistantThreadEntry {
   return {
     id: makeId(),
     kind: "assistant",
@@ -94,7 +115,9 @@ function isAssistantEntry(entry: ThreadEntry): entry is AssistantThreadEntry {
   return entry.kind === "assistant";
 }
 
-function isPendingAssistantEntry(entry: ThreadEntry): entry is PendingAssistantThreadEntry {
+function isPendingAssistantEntry(
+  entry: ThreadEntry,
+): entry is PendingAssistantThreadEntry {
   return entry.kind === "pending-assistant";
 }
 
@@ -107,14 +130,22 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function isThreadEntry(value: unknown): value is ThreadEntry {
-  if (!isRecord(value) || typeof value.id !== "string" || typeof value.kind !== "string") {
+  if (
+    !isRecord(value) ||
+    typeof value.id !== "string" ||
+    typeof value.kind !== "string"
+  ) {
     return false;
   }
   if (value.kind === "user") {
     return typeof value.query === "string";
   }
   if (value.kind === "assistant") {
-    return typeof value.source === "string" && typeof value.interactive === "boolean" && isRecord(value.session);
+    return (
+      typeof value.source === "string" &&
+      typeof value.interactive === "boolean" &&
+      isRecord(value.session)
+    );
   }
   if (value.kind === "pending-assistant") {
     return value.session === null || isRecord(value.session);
@@ -151,22 +182,29 @@ function normalizeThread(entries: ThreadEntry[]): ThreadEntry[] {
     return [entry];
   });
 
-  const hasPending = cleaned.some((entry) => entry.kind === "pending-assistant");
+  const hasPending = cleaned.some(
+    (entry) => entry.kind === "pending-assistant",
+  );
   if (hasPending) {
-    return cleaned.map((entry) => (entry.kind === "assistant" ? { ...entry, interactive: false } : entry));
+    return cleaned.map((entry) =>
+      entry.kind === "assistant" ? { ...entry, interactive: false } : entry,
+    );
   }
 
   let interactiveAssigned = false;
-  return [...cleaned].reverse().map((entry) => {
-    if (entry.kind !== "assistant") {
-      return entry;
-    }
-    if (!interactiveAssigned) {
-      interactiveAssigned = true;
-      return { ...entry, interactive: true };
-    }
-    return entry.interactive ? { ...entry, interactive: false } : entry;
-  }).reverse();
+  return [...cleaned]
+    .reverse()
+    .map((entry) => {
+      if (entry.kind !== "assistant") {
+        return entry;
+      }
+      if (!interactiveAssigned) {
+        interactiveAssigned = true;
+        return { ...entry, interactive: true };
+      }
+      return entry.interactive ? { ...entry, interactive: false } : entry;
+    })
+    .reverse();
 }
 
 function loadPersistedThread(): ThreadEntry[] {
@@ -183,7 +221,9 @@ function loadPersistedThread(): ThreadEntry[] {
     const payload = JSON.parse(raw) as PersistedThreadPayload | ThreadEntry[];
     const maybeThread = Array.isArray(payload)
       ? payload
-      : isRecord(payload) && payload.version === 1 && Array.isArray(payload.thread)
+      : isRecord(payload) &&
+          payload.version === 1 &&
+          Array.isArray(payload.thread)
         ? payload.thread
         : [];
 
@@ -212,7 +252,10 @@ function persistThread(thread: ThreadEntry[]) {
     const compactThread = normalizeThread(thread).slice(-80);
     window.localStorage.setItem(
       THREAD_STORAGE_KEY,
-      JSON.stringify({ version: 1, thread: compactThread } satisfies PersistedThreadPayload),
+      JSON.stringify({
+        version: 1,
+        thread: compactThread,
+      } satisfies PersistedThreadPayload),
     );
     return;
   }
@@ -223,7 +266,10 @@ function persistThread(thread: ThreadEntry[]) {
       const compactThread = normalizeThread(thread).slice(-40);
       window.localStorage.setItem(
         THREAD_STORAGE_KEY,
-        JSON.stringify({ version: 1, thread: compactThread } satisfies PersistedThreadPayload),
+        JSON.stringify({
+          version: 1,
+          thread: compactThread,
+        } satisfies PersistedThreadPayload),
       );
       return;
     }
@@ -240,32 +286,34 @@ function isRecentResearchItem(value: unknown): value is RecentResearchItem {
   );
 }
 
-function deriveRecentResearchFromThread(thread: ThreadEntry[]): RecentResearchItem[] {
+function deriveRecentResearchFromThread(
+  thread: ThreadEntry[],
+): RecentResearchItem[] {
   const seen = new Set<string>();
   const recent: RecentResearchItem[] = [];
 
-  [...thread]
-    .reverse()
-    .forEach((entry) => {
-      if (entry.kind !== "user") {
-        return;
-      }
-      const key = entry.query.trim().toLowerCase();
-      if (!key || seen.has(key)) {
-        return;
-      }
-      seen.add(key);
-      recent.push({
-        id: entry.id,
-        query: entry.query,
-        createdAt: entry.createdAt,
-      });
+  [...thread].reverse().forEach((entry) => {
+    if (entry.kind !== "user") {
+      return;
+    }
+    const key = entry.query.trim().toLowerCase();
+    if (!key || seen.has(key)) {
+      return;
+    }
+    seen.add(key);
+    recent.push({
+      id: entry.id,
+      query: entry.query,
+      createdAt: entry.createdAt,
     });
+  });
 
   return recent.slice(0, MAX_RECENT_RESEARCH_ITEMS);
 }
 
-function loadPersistedRecentResearch(initialThread: ThreadEntry[]): RecentResearchItem[] {
+function loadPersistedRecentResearch(
+  initialThread: ThreadEntry[],
+): RecentResearchItem[] {
   if (typeof window === "undefined") {
     return deriveRecentResearchFromThread(initialThread);
   }
@@ -276,14 +324,20 @@ function loadPersistedRecentResearch(initialThread: ThreadEntry[]): RecentResear
       return deriveRecentResearchFromThread(initialThread);
     }
 
-    const payload = JSON.parse(raw) as PersistedRecentResearchPayload | RecentResearchItem[];
+    const payload = JSON.parse(raw) as
+      | PersistedRecentResearchPayload
+      | RecentResearchItem[];
     const items = Array.isArray(payload)
       ? payload
-      : isRecord(payload) && payload.version === 1 && Array.isArray(payload.recentResearch)
+      : isRecord(payload) &&
+          payload.version === 1 &&
+          Array.isArray(payload.recentResearch)
         ? payload.recentResearch
         : [];
 
-    return items.filter(isRecentResearchItem).slice(0, MAX_RECENT_RESEARCH_ITEMS);
+    return items
+      .filter(isRecentResearchItem)
+      .slice(0, MAX_RECENT_RESEARCH_ITEMS);
   } catch {
     return deriveRecentResearchFromThread(initialThread);
   }
@@ -304,14 +358,20 @@ function persistRecentResearch(recentResearch: RecentResearchItem[]) {
     recentResearch,
   };
   try {
-    window.localStorage.setItem(RECENT_RESEARCH_STORAGE_KEY, JSON.stringify(payload));
+    window.localStorage.setItem(
+      RECENT_RESEARCH_STORAGE_KEY,
+      JSON.stringify(payload),
+    );
   } catch (error) {
     if (error instanceof DOMException && error.name === "QuotaExceededError") {
       window.localStorage.setItem(
         RECENT_RESEARCH_STORAGE_KEY,
         JSON.stringify({
           version: 1,
-          recentResearch: recentResearch.slice(0, Math.max(1, Math.floor(MAX_RECENT_RESEARCH_ITEMS / 2))),
+          recentResearch: recentResearch.slice(
+            0,
+            Math.max(1, Math.floor(MAX_RECENT_RESEARCH_ITEMS / 2)),
+          ),
         } satisfies PersistedRecentResearchPayload),
       );
       return;
@@ -320,7 +380,10 @@ function persistRecentResearch(recentResearch: RecentResearchItem[]) {
   }
 }
 
-function updateRecentResearch(current: RecentResearchItem[], query: string): RecentResearchItem[] {
+function updateRecentResearch(
+  current: RecentResearchItem[],
+  query: string,
+): RecentResearchItem[] {
   const normalized = query.trim().toLowerCase();
   if (!normalized) {
     return current;
@@ -332,7 +395,9 @@ function updateRecentResearch(current: RecentResearchItem[], query: string): Rec
     createdAt: new Date().toISOString(),
   };
 
-  const deduped = current.filter((item) => item.query.trim().toLowerCase() !== normalized);
+  const deduped = current.filter(
+    (item) => item.query.trim().toLowerCase() !== normalized,
+  );
   return [nextItem, ...deduped].slice(0, MAX_RECENT_RESEARCH_ITEMS);
 }
 
@@ -364,18 +429,32 @@ function formatRecentResearchDate(value: string) {
 export default function App() {
   const [initialClientState] = useState(loadInitialClientState);
   const [query, setQuery] = useState("");
-  const [thread, setThread] = useState<ThreadEntry[]>(initialClientState.thread);
-  const [recentResearch, setRecentResearch] = useState<RecentResearchItem[]>(initialClientState.recentResearch);
+  const [thread, setThread] = useState<ThreadEntry[]>(
+    initialClientState.thread,
+  );
+  const [recentResearch, setRecentResearch] = useState<RecentResearchItem[]>(
+    initialClientState.recentResearch,
+  );
   const [loading, setLoading] = useState(false);
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
-  const [drawerTab, setDrawerTab] = useState<"settings" | "diagnostics">("settings");
-  const [activeCitation, setActiveCitation] = useState<ActiveCitationContext | null>(null);
-  const [hostedSettings, setHostedSettings] = useState<HostedSettingsState | null>(null);
-  const [hostedProviders, setHostedProviders] = useState<HostedProviderDescriptor[]>([]);
+  const [drawerTab, setDrawerTab] = useState<"settings" | "diagnostics">(
+    "settings",
+  );
+  const [activeCitation, setActiveCitation] =
+    useState<ActiveCitationContext | null>(null);
+  const [hostedSettings, setHostedSettings] =
+    useState<HostedSettingsState | null>(null);
+  const [hostedProviders, setHostedProviders] = useState<
+    HostedProviderDescriptor[]
+  >([]);
   const [hostedSettingsLoading, setHostedSettingsLoading] = useState(true);
   const [hostedSettingsSaving, setHostedSettingsSaving] = useState(false);
-  const [hostedSettingsError, setHostedSettingsError] = useState<string | null>(null);
-  const [hostedSettingsSaveNotice, setHostedSettingsSaveNotice] = useState<string | null>(null);
+  const [hostedSettingsError, setHostedSettingsError] = useState<string | null>(
+    null,
+  );
+  const [hostedSettingsSaveNotice, setHostedSettingsSaveNotice] = useState<
+    string | null
+  >(null);
   const resumedPersistedPendingRef = useRef(false);
   const pollTokenRef = useRef(0);
   const workspaceColumnRef = useRef<HTMLElement | null>(null);
@@ -388,16 +467,36 @@ export default function App() {
     [thread],
   );
   const interactiveAssistant = useMemo(
-    () => [...thread].reverse().find((entry): entry is AssistantThreadEntry => isAssistantEntry(entry) && entry.interactive) ?? null,
+    () =>
+      [...thread]
+        .reverse()
+        .find(
+          (entry): entry is AssistantThreadEntry =>
+            isAssistantEntry(entry) && entry.interactive,
+        ) ?? null,
     [thread],
   );
   const latestPendingSession = useMemo(
-    () => [...thread].reverse().find((entry): entry is PendingAssistantThreadEntry => isPendingAssistantEntry(entry) && entry.session !== null)?.session ?? null,
+    () =>
+      [...thread]
+        .reverse()
+        .find(
+          (entry): entry is PendingAssistantThreadEntry =>
+            isPendingAssistantEntry(entry) && entry.session !== null,
+        )?.session ?? null,
     [thread],
   );
-  const latestSession = interactiveAssistant?.session ?? latestAssistant?.session ?? latestPendingSession ?? null;
+  const latestSession =
+    interactiveAssistant?.session ??
+    latestAssistant?.session ??
+    latestPendingSession ??
+    null;
   const latestUserQuery = useMemo(
-    () => [...thread].reverse().find((entry): entry is UserThreadEntry => entry.kind === "user")?.query ?? null,
+    () =>
+      [...thread]
+        .reverse()
+        .find((entry): entry is UserThreadEntry => entry.kind === "user")
+        ?.query ?? null,
     [thread],
   );
 
@@ -427,7 +526,9 @@ export default function App() {
           return;
         }
         setHostedSettingsError(
-          error instanceof Error ? error.message : "Could not load hosted settings.",
+          error instanceof Error
+            ? error.message
+            : "Could not load hosted settings.",
         );
       } finally {
         if (!cancelled) {
@@ -448,17 +549,25 @@ export default function App() {
     }
     resumedPersistedPendingRef.current = true;
 
-    const pending = [...thread].reverse().find(
-      (entry): entry is PendingAssistantThreadEntry =>
-        isPendingAssistantEntry(entry) && entry.session !== null && entry.session.query_status === "running",
-    );
+    const pending = [...thread]
+      .reverse()
+      .find(
+        (entry): entry is PendingAssistantThreadEntry =>
+          isPendingAssistantEntry(entry) &&
+          entry.session !== null &&
+          entry.session.query_status === "running",
+      );
     if (!pending?.session) {
       return;
     }
 
     setLoading(true);
     const pollToken = ++pollTokenRef.current;
-    void pollQueryProgress(pending.id, pending.session.session_id, pollToken).catch(() => {
+    void pollQueryProgress(
+      pending.id,
+      pending.session.session_id,
+      pollToken,
+    ).catch(() => {
       setLoading(false);
     });
   }, [thread]);
@@ -524,7 +633,9 @@ export default function App() {
       if (!current || current.session.session_id !== nextSession.session_id) {
         return current;
       }
-      const citation = nextSession.citation_index.find((item) => item.citation_id === current.citation.citation_id);
+      const citation = nextSession.citation_index.find(
+        (item) => item.citation_id === current.citation.citation_id,
+      );
       if (!citation) {
         return null;
       }
@@ -532,9 +643,14 @@ export default function App() {
     });
   }
 
-  function appendAssistantSession(nextSession: SessionState, source: AssistantMessageSource) {
+  function appendAssistantSession(
+    nextSession: SessionState,
+    source: AssistantMessageSource,
+  ) {
     setThread((current) => [
-      ...current.map((entry) => (isAssistantEntry(entry) ? { ...entry, interactive: false } : entry)),
+      ...current.map((entry) =>
+        isAssistantEntry(entry) ? { ...entry, interactive: false } : entry,
+      ),
       assistantEntry(source, nextSession, true),
     ]);
   }
@@ -542,12 +658,17 @@ export default function App() {
   function updatePendingSession(pendingId: string, nextSession: SessionState) {
     setThread((current) =>
       current.map((entry) =>
-        isPendingAssistantEntry(entry) && entry.id === pendingId ? { ...entry, session: nextSession } : entry,
+        isPendingAssistantEntry(entry) && entry.id === pendingId
+          ? { ...entry, session: nextSession }
+          : entry,
       ),
     );
   }
 
-  function completePendingSession(pendingId: string, nextSession: SessionState) {
+  function completePendingSession(
+    pendingId: string,
+    nextSession: SessionState,
+  ) {
     setThread((current) =>
       current.map((entry) => {
         if (isPendingAssistantEntry(entry) && entry.id === pendingId) {
@@ -561,10 +682,15 @@ export default function App() {
     );
   }
 
-  function replaceAssistantEntrySession(entryId: string, nextSession: SessionState) {
+  function replaceAssistantEntrySession(
+    entryId: string,
+    nextSession: SessionState,
+  ) {
     setThread((current) =>
       current.map((entry) =>
-        isAssistantEntry(entry) && entry.id === entryId ? { ...entry, session: nextSession } : entry,
+        isAssistantEntry(entry) && entry.id === entryId
+          ? { ...entry, session: nextSession }
+          : entry,
       ),
     );
     setActiveCitation((current) => {
@@ -584,12 +710,18 @@ export default function App() {
   function failPendingSession(pendingId: string, nextSession: SessionState) {
     setThread((current) =>
       current.map((entry) =>
-        isPendingAssistantEntry(entry) && entry.id === pendingId ? { ...entry, session: nextSession } : entry,
+        isPendingAssistantEntry(entry) && entry.id === pendingId
+          ? { ...entry, session: nextSession }
+          : entry,
       ),
     );
   }
 
-  async function pollQueryProgress(pendingId: string, sessionId: string, pollToken: number) {
+  async function pollQueryProgress(
+    pendingId: string,
+    sessionId: string,
+    pollToken: number,
+  ) {
     while (pollTokenRef.current === pollToken) {
       const response = await api.getSession(sessionId);
       const nextSession = response.session;
@@ -625,7 +757,9 @@ export default function App() {
     setDiagnosticsOpen(true);
   }
 
-  async function handleSaveHostedSettings(payload: HostedSettingsUpdatePayload) {
+  async function handleSaveHostedSettings(
+    payload: HostedSettingsUpdatePayload,
+  ) {
     setHostedSettingsSaving(true);
     setHostedSettingsError(null);
     setHostedSettingsSaveNotice(null);
@@ -638,7 +772,9 @@ export default function App() {
       setHostedSettingsSaveNotice("Provider settings saved successfully.");
     } catch (error) {
       setHostedSettingsError(
-        error instanceof Error ? error.message : "Could not save hosted settings.",
+        error instanceof Error
+          ? error.message
+          : "Could not save hosted settings.",
       );
     } finally {
       setHostedSettingsSaving(false);
@@ -647,11 +783,16 @@ export default function App() {
 
   function handleDeleteRecentResearch(itemId: string) {
     startTransition(() => {
-      setRecentResearch((current) => current.filter((item) => item.id !== itemId));
+      setRecentResearch((current) =>
+        current.filter((item) => item.id !== itemId),
+      );
     });
   }
 
-  async function submitQuery(queryOverride?: string, options?: { fresh?: boolean }) {
+  async function submitQuery(
+    queryOverride?: string,
+    options?: { fresh?: boolean },
+  ) {
     const submittedQuery = (queryOverride ?? query).trim();
     if (!submittedQuery) return;
 
@@ -659,10 +800,23 @@ export default function App() {
 
     const pendingId = makeId();
     startTransition(() => {
-      setRecentResearch((current) => updateRecentResearch(current, submittedQuery));
+      setRecentResearch((current) =>
+        updateRecentResearch(current, submittedQuery),
+      );
       setThread((current) => [
-        ...(options?.fresh ? [] : current.map((entry) => (isAssistantEntry(entry) ? { ...entry, interactive: false } : entry))),
-        { id: makeId(), kind: "user", query: submittedQuery, createdAt: new Date().toISOString() },
+        ...(options?.fresh
+          ? []
+          : current.map((entry) =>
+              isAssistantEntry(entry)
+                ? { ...entry, interactive: false }
+                : entry,
+            )),
+        {
+          id: makeId(),
+          kind: "user",
+          query: submittedQuery,
+          createdAt: new Date().toISOString(),
+        },
         { id: pendingId, kind: "pending-assistant", session: null },
       ]);
       setQuery("");
@@ -673,10 +827,19 @@ export default function App() {
       const response = await api.startQuery(submittedQuery);
       startTransition(() => updatePendingSession(pendingId, response.session));
       const pollToken = ++pollTokenRef.current;
-      await pollQueryProgress(pendingId, response.session.session_id, pollToken);
+      await pollQueryProgress(
+        pendingId,
+        response.session.session_id,
+        pollToken,
+      );
     } catch (error) {
       startTransition(() => {
-        setThread((current) => current.filter((entry) => !(isPendingAssistantEntry(entry) && entry.id === pendingId)));
+        setThread((current) =>
+          current.filter(
+            (entry) =>
+              !(isPendingAssistantEntry(entry) && entry.id === pendingId),
+          ),
+        );
       });
       setLoading(false);
     }
@@ -694,7 +857,9 @@ export default function App() {
   ) {
     try {
       const response = await api.addComment(sessionId, payload);
-      startTransition(() => replaceAssistantEntrySession(entryId, response.session));
+      startTransition(() =>
+        replaceAssistantEntrySession(entryId, response.session),
+      );
     } catch {
       // Backend unavailable — save comment locally
       const localComment = {
@@ -726,7 +891,11 @@ export default function App() {
     }
   }
 
-  function updateCommentLocally(entryId: string, commentId: string, commentText: string) {
+  function updateCommentLocally(
+    entryId: string,
+    commentId: string,
+    commentText: string,
+  ) {
     startTransition(() => {
       setThread((current) =>
         current.map((entry) => {
@@ -738,7 +907,9 @@ export default function App() {
               feedback: {
                 ...entry.session.feedback,
                 comments: entry.session.feedback.comments.map((c) =>
-                  c.comment_id === commentId ? { ...c, comment_text: commentText } : c,
+                  c.comment_id === commentId
+                    ? { ...c, comment_text: commentText }
+                    : c,
                 ),
               },
             },
@@ -760,7 +931,9 @@ export default function App() {
               ...entry.session,
               feedback: {
                 ...entry.session.feedback,
-                comments: entry.session.feedback.comments.filter((c) => c.comment_id !== commentId),
+                comments: entry.session.feedback.comments.filter(
+                  (c) => c.comment_id !== commentId,
+                ),
               },
             },
           };
@@ -769,20 +942,35 @@ export default function App() {
     });
   }
 
-  async function handleUpdateSelectionComment(entryId: string, sessionId: string, commentId: string, commentText: string) {
+  async function handleUpdateSelectionComment(
+    entryId: string,
+    sessionId: string,
+    commentId: string,
+    commentText: string,
+  ) {
     if (localCommentIds.current.has(commentId)) {
       updateCommentLocally(entryId, commentId, commentText);
       return;
     }
     try {
-      const response = await api.updateComment(sessionId, commentId, commentText);
-      startTransition(() => replaceAssistantEntrySession(entryId, response.session));
+      const response = await api.updateComment(
+        sessionId,
+        commentId,
+        commentText,
+      );
+      startTransition(() =>
+        replaceAssistantEntrySession(entryId, response.session),
+      );
     } catch {
       updateCommentLocally(entryId, commentId, commentText);
     }
   }
 
-  async function handleDeleteSelectionComment(entryId: string, sessionId: string, commentId: string) {
+  async function handleDeleteSelectionComment(
+    entryId: string,
+    sessionId: string,
+    commentId: string,
+  ) {
     if (localCommentIds.current.has(commentId)) {
       deleteCommentLocally(entryId, commentId);
       return;
@@ -796,8 +984,17 @@ export default function App() {
   }
 
   const threadActions: ThreadActions = {
-    openCitation: (entryId, session, sentence, citationId, referenceQuote, readOnly) => {
-      const citation = session.citation_index.find((item) => item.citation_id === citationId);
+    openCitation: (
+      entryId,
+      session,
+      sentence,
+      citationId,
+      referenceQuote,
+      readOnly,
+    ) => {
+      const citation = session.citation_index.find(
+        (item) => item.citation_id === citationId,
+      );
       if (!citation) return;
       setActiveCitation({
         entryId,
@@ -814,7 +1011,9 @@ export default function App() {
     refine: async (sessionId: string) => {
       try {
         const response = await api.refine(sessionId);
-        startTransition(() => appendAssistantSession(response.session, "refinement"));
+        startTransition(() =>
+          appendAssistantSession(response.session, "refinement"),
+        );
       } catch {
         // Keep the current interactive response unchanged if refine fails.
       }
@@ -824,171 +1023,196 @@ export default function App() {
   return (
     <ThreadActionsProvider value={threadActions}>
       <div className="app-shell">
-      <aside className="app-sidebar">
-        <div className="sidebar-brand">
-          <span className="sidebar-mark">Q</span>
-          <div>
-            <p className="sidebar-title">QUARRY</p>
-            <p className="sidebar-subtitle">Architectural Intelligence</p>
+        <aside className="app-sidebar">
+          <div className="sidebar-brand">
+            <span className="sidebar-mark">Q</span>
+            <div>
+              <p className="sidebar-title">QUARRY</p>
+              <p className="sidebar-subtitle">Architectural Intelligence</p>
+            </div>
           </div>
-        </div>
 
-        <Button className="sidebar-primary-action h-11 justify-start text-sm" onClick={handleNewSearch}>
-          + New Search
-        </Button>
-
-        <div className="sidebar-section">
-          <span className="tiny-label">Recent Research</span>
-          {recentResearch.length ? (
-            <div className="recent-research-list">
-              {recentResearch.map((item, index) => (
-                <div
-                  className={`recent-research-item ${index === 0 && latestUserQuery === item.query ? "active" : ""}`}
-                  key={item.id}
-                >
-                  <Button
-                    className="recent-research-open h-auto whitespace-normal"
-                    onClick={() => void submitQuery(item.query, { fresh: true })}
-                    variant="ghost"
-                  >
-                    <strong>{item.query}</strong>
-                    <span>{formatRecentResearchDate(item.createdAt)}</span>
-                  </Button>
-                  <Button
-                    className="recent-research-delete"
-                    aria-label={`Delete search ${item.query}`}
-                    onClick={() => handleDeleteRecentResearch(item.id)}
-                  >
-                    <Trash2 aria-hidden="true" focusable="false" />
-                  </Button>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <p className="sidebar-empty">
-              Your recent research questions will appear here so you can return to them quickly.
-            </p>
-          )}
-        </div>
-      </aside>
-
-      <div className="workspace-shell">
-        {thread.length === 0 ? (
-          <main className="landing-stage">
-            <div className="landing-utility-row">
-              <Button
-                className="diagnostics-trigger"
-                data-testid="open-workspace-settings"
-                onClick={() => openWorkspaceDrawer("settings")}
-              >
-                <span className="sr-only">Provider settings</span>
-                <Cog aria-hidden="true" focusable="false" />
-              </Button>
-            </div>
-
-            <section className="hero-block">
-              <h1>Intelligence for the built environment.</h1>
-              <p>
-                Ask complex questions, analyze technical reports, and verify construction guidance with editorial clarity and structural precision.
-              </p>
-            </section>
-
-            <QueryComposer
-              className="landing"
-              id="query-input"
-              loading={loading}
-              placeholder="What is PDRI maturity?"
-              query={query}
-              onChange={setQuery}
-              onSubmit={() => void submitQuery()}
-            />
-          </main>
-        ) : (
-          <main
-            className="conversation-stage with-docked-offset"
-            style={{ "--docked-composer-offset": `${dockedComposerOffset}px` } as CSSProperties}
+          <Button
+            className="sidebar-primary-action h-11 justify-start text-sm"
+            onClick={handleNewSearch}
           >
-            <section className="workspace-column" ref={workspaceColumnRef}>
-              <div className="thread-intro">
-                <div className="thread-intro-copy">
-                  <span className="tiny-label">Research Thread</span>
-                  <h2>{latestUserQuery ?? "Current analysis"}</h2>
-                </div>
+            + New Search
+          </Button>
+
+          <div className="sidebar-section">
+            <span className="tiny-label">Recent Research</span>
+            {recentResearch.length ? (
+              <div className="recent-research-list">
+                {recentResearch.map((item, index) => (
+                  <div
+                    className={`recent-research-item ${index === 0 && latestUserQuery === item.query ? "active" : ""}`}
+                    key={item.id}
+                  >
+                    <Button
+                      className="recent-research-open h-auto whitespace-normal"
+                      onClick={() =>
+                        void submitQuery(item.query, { fresh: true })
+                      }
+                      variant="ghost"
+                    >
+                      <strong>{item.query}</strong>
+                      <span>{formatRecentResearchDate(item.createdAt)}</span>
+                    </Button>
+                    <Button
+                      className="recent-research-delete"
+                      aria-label={`Delete search ${item.query}`}
+                      onClick={() => handleDeleteRecentResearch(item.id)}
+                    >
+                      <Trash2 aria-hidden="true" focusable="false" />
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="sidebar-empty">
+                Your recent research questions will appear here so you can
+                return to them quickly.
+              </p>
+            )}
+          </div>
+        </aside>
+
+        <div className="workspace-shell">
+          {thread.length === 0 ? (
+            <main className="landing-stage">
+              <div className="landing-utility-row">
                 <Button
                   className="diagnostics-trigger"
-                  data-testid="open-diagnostics"
-                  onClick={() => openWorkspaceDrawer("diagnostics")}
+                  data-testid="open-workspace-settings"
+                  onClick={() => openWorkspaceDrawer("settings")}
                 >
-                  <span className="sr-only">Provider settings and diagnostics</span>
+                  <span className="sr-only">Provider settings</span>
                   <Cog aria-hidden="true" focusable="false" />
                 </Button>
               </div>
 
-              <div className="thread-column" data-testid="conversation-thread">
-                {thread.map((entry) =>
-                  entry.kind === "user" ? (
-                    <Card className="thread-message user-message border-border/70 bg-card/90" key={entry.id}>
-                      <CardContent className="flex flex-col gap-2">
-                        <span className="tiny-label">Query</span>
-                        <p>{entry.query}</p>
-                      </CardContent>
-                    </Card>
-                  ) : entry.kind === "pending-assistant" ? (
-                    <PendingConversationMessage key={entry.id} session={entry.session} />
-                  ) : (
-                    <ConversationMessage
-                      key={entry.id}
-                      entryId={entry.id}
-                      source={entry.source}
-                      session={entry.session}
-                      interactive={entry.interactive}
-                    />
-                  ),
-                )}
-              </div>
-            </section>
+              <section className="hero-block">
+                <h1>Intelligence for the built environment.</h1>
+                <p>
+                  Ask complex questions, analyze technical reports, and verify
+                  construction guidance with editorial clarity and structural
+                  precision.
+                </p>
+              </section>
 
-            <QueryComposer
-              className="docked"
-              id="thread-query-input"
-              label=""
-              loading={loading}
-              placeholder="Ask follow-up questions"
-              query={query}
-              formRef={dockedComposerRef}
-              onChange={setQuery}
-              onSubmit={() => void submitQuery()}
-            />
-          </main>
-        )}
-      </div>
+              <QueryComposer
+                className="landing"
+                id="query-input"
+                loading={loading}
+                placeholder="What is PDRI maturity?"
+                query={query}
+                onChange={setQuery}
+                onSubmit={() => void submitQuery()}
+              />
+            </main>
+          ) : (
+            <main
+              className="conversation-stage with-docked-offset"
+              style={
+                {
+                  "--docked-composer-offset": `${dockedComposerOffset}px`,
+                } as CSSProperties
+              }
+            >
+              <section className="workspace-column" ref={workspaceColumnRef}>
+                <div className="thread-intro">
+                  <div className="thread-intro-copy">
+                    <span className="tiny-label">Research Thread</span>
+                    <h2>{latestUserQuery ?? "Current analysis"}</h2>
+                  </div>
+                  <Button
+                    className="diagnostics-trigger"
+                    data-testid="open-diagnostics"
+                    onClick={() => openWorkspaceDrawer("diagnostics")}
+                  >
+                    <span className="sr-only">
+                      Provider settings and diagnostics
+                    </span>
+                    <Cog aria-hidden="true" focusable="false" />
+                  </Button>
+                </div>
 
-      <DiagnosticsDrawer
-        session={latestSession}
-        open={diagnosticsOpen}
-        activeTab={drawerTab}
-        settings={hostedSettings}
-        providers={hostedProviders}
-        settingsLoading={hostedSettingsLoading}
-        settingsSaving={hostedSettingsSaving}
-        settingsError={hostedSettingsError}
-        settingsSaveNotice={hostedSettingsSaveNotice}
-        onTabChange={setDrawerTab}
-        onClose={() => setDiagnosticsOpen(false)}
-        onSaveSettings={(payload) => void handleSaveHostedSettings(payload)}
-      />
+                <div
+                  className="thread-column"
+                  data-testid="conversation-thread"
+                >
+                  {thread.map((entry) =>
+                    entry.kind === "user" ? (
+                      <Card
+                        className="thread-message user-message border-border/70 bg-card/90"
+                        key={entry.id}
+                      >
+                        <CardContent className="flex flex-col gap-2">
+                          <span className="tiny-label">Query</span>
+                          <p>{entry.query}</p>
+                        </CardContent>
+                      </Card>
+                    ) : entry.kind === "pending-assistant" ? (
+                      <PendingConversationMessage
+                        key={entry.id}
+                        session={entry.session}
+                      />
+                    ) : (
+                      <ConversationMessage
+                        key={entry.id}
+                        entryId={entry.id}
+                        source={entry.source}
+                        session={entry.session}
+                        interactive={entry.interactive}
+                      />
+                    ),
+                  )}
+                </div>
+              </section>
 
-      {activeCitation ? (
-        <CitationDialog
-          citation={activeCitation.citation}
-          sentenceIndex={activeCitation.sentenceIndex}
-          referenceQuote={activeCitation.referenceQuote}
-          readOnly={activeCitation.readOnly}
-          session={activeCitation.session}
-          onClose={() => setActiveCitation(null)}
-          onSessionUpdate={(nextSession) => startTransition(() => replaceInteractiveSession(nextSession))}
+              <QueryComposer
+                className="docked"
+                id="thread-query-input"
+                label=""
+                loading={loading}
+                placeholder="Ask follow-up questions"
+                query={query}
+                formRef={dockedComposerRef}
+                onChange={setQuery}
+                onSubmit={() => void submitQuery()}
+              />
+            </main>
+          )}
+        </div>
+
+        <DiagnosticsDrawer
+          session={latestSession}
+          open={diagnosticsOpen}
+          activeTab={drawerTab}
+          settings={hostedSettings}
+          providers={hostedProviders}
+          settingsLoading={hostedSettingsLoading}
+          settingsSaving={hostedSettingsSaving}
+          settingsError={hostedSettingsError}
+          settingsSaveNotice={hostedSettingsSaveNotice}
+          onTabChange={setDrawerTab}
+          onClose={() => setDiagnosticsOpen(false)}
+          onSaveSettings={(payload) => void handleSaveHostedSettings(payload)}
         />
-      ) : null}
+
+        {activeCitation ? (
+          <CitationDialog
+            citation={activeCitation.citation}
+            sentenceIndex={activeCitation.sentenceIndex}
+            referenceQuote={activeCitation.referenceQuote}
+            readOnly={activeCitation.readOnly}
+            session={activeCitation.session}
+            onClose={() => setActiveCitation(null)}
+            onSessionUpdate={(nextSession) =>
+              startTransition(() => replaceInteractiveSession(nextSession))
+            }
+          />
+        ) : null}
       </div>
     </ThreadActionsProvider>
   );

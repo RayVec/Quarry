@@ -1,11 +1,13 @@
 import type {
-    CitationIndexEntry,
-    HostedSettingsEnvelope,
-    HostedSettingsUpdatePayload,
-    SessionEnvelope,
+  CitationIndexEntry,
+  HostedSettingsEnvelope,
+  HostedSettingsUpdatePayload,
+  SessionEnvelope,
 } from "./types";
 
-const maybeEnv = (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env;
+const maybeEnv = (
+  import.meta as ImportMeta & { env?: Record<string, string | undefined> }
+).env;
 const API_ROOT =
   maybeEnv?.VITE_API_ROOT?.replace(/\/+$/, "") ||
   "http://127.0.0.1:8000/api/v1";
@@ -34,7 +36,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
         detail = payload.detail;
       } else if (payload.detail && typeof payload.detail === "object") {
         detail =
-          typeof payload.detail.message === "string" && payload.detail.message.trim()
+          typeof payload.detail.message === "string" &&
+          payload.detail.message.trim()
             ? payload.detail.message
             : null;
         code =
@@ -45,7 +48,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     } catch {
       detail = null;
     }
-    throw new Error(code ? `${code}: ${detail ?? raw}` : detail ?? raw);
+    throw new Error(code ? `${code}: ${detail ?? raw}` : (detail ?? raw));
   }
   if (response.status === 204) {
     return undefined as T;
@@ -157,7 +160,10 @@ export const api = {
       `/sessions/${sessionId}/citations/${citationId}/feedback`,
       {
         method: "POST",
-        body: JSON.stringify({ sentence_index: sentenceIndex, feedback_type: feedbackType }),
+        body: JSON.stringify({
+          sentence_index: sentenceIndex,
+          feedback_type: feedbackType,
+        }),
       },
     );
   },

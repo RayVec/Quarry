@@ -102,7 +102,9 @@ function _closestSentenceCopy(node: Node | null): HTMLElement | null {
   if (node instanceof HTMLElement) {
     return node.closest<HTMLElement>(SENTENCE_COPY_SELECTOR);
   }
-  return node.parentElement?.closest<HTMLElement>(SENTENCE_COPY_SELECTOR) ?? null;
+  return (
+    node.parentElement?.closest<HTMLElement>(SENTENCE_COPY_SELECTOR) ?? null
+  );
 }
 
 function _rangePointOffsetInSentence(
@@ -134,7 +136,7 @@ export function ResponseReview({
     null,
   );
   const [popupState, setPopupState] = useState<PopupState | null>(null);
-  
+
   const citationFeedbackMap = useMemo(() => {
     const map = new Map<string, "like" | "dislike" | "neutral">();
     session.feedback.citation_feedback?.forEach((fb) => {
@@ -155,7 +157,10 @@ export function ResponseReview({
   const citationById = useMemo(
     () =>
       new Map(
-        session.citation_index.map((citation) => [citation.citation_id, citation]),
+        session.citation_index.map((citation) => [
+          citation.citation_id,
+          citation,
+        ]),
       ),
     [session.citation_index],
   );
@@ -299,9 +304,14 @@ export function ResponseReview({
       return;
     }
 
-    const startSentenceIndex = Number(startSentenceCopy.dataset.sentenceCopyIndex);
+    const startSentenceIndex = Number(
+      startSentenceCopy.dataset.sentenceCopyIndex,
+    );
     const endSentenceIndex = Number(endSentenceCopy.dataset.sentenceCopyIndex);
-    if (!Number.isInteger(startSentenceIndex) || !Number.isInteger(endSentenceIndex)) {
+    if (
+      !Number.isInteger(startSentenceIndex) ||
+      !Number.isInteger(endSentenceIndex)
+    ) {
       setSelectionDraft(null);
       return;
     }
@@ -388,7 +398,8 @@ export function ResponseReview({
   const popupPosition = useMemo(() => {
     if (!popupState || !contentRef.current) return null;
     const containerRect = contentRef.current.getBoundingClientRect();
-    const popupWidth = popupRef.current?.offsetWidth ?? COMMENT_CARD_FALLBACK_WIDTH;
+    const popupWidth =
+      popupRef.current?.offsetWidth ?? COMMENT_CARD_FALLBACK_WIDTH;
     const left = clampPosition(
       containerRect.width - popupWidth - COMMENT_GUTTER_INSET,
       0,
@@ -445,7 +456,9 @@ export function ResponseReview({
       >
         {!paragraphs.length ? (
           <Alert className="response-empty-state border-border/70 bg-card/90">
-            <AlertTitle className="tiny-label">No verified answer to show</AlertTitle>
+            <AlertTitle className="tiny-label">
+              No verified answer to show
+            </AlertTitle>
             <AlertDescription>
               I couldn't prepare a grounded response from the current evidence.
               You can try a narrower question or ask QUARRY to try again with
@@ -549,7 +562,9 @@ export function ResponseReview({
                             <span
                               key={`${sentence.sentence_index}-seg-${i}`}
                               className={
-                                inDraft ? "draft-selection-highlight" : undefined
+                                inDraft
+                                  ? "draft-selection-highlight"
+                                  : undefined
                               }
                             >
                               {segmentText}
@@ -591,47 +606,54 @@ export function ResponseReview({
                     </span>{" "}
                     <span className="response-inline-citations">
                       {sentence.references.map((reference, index) => {
-                      if (!reference.citation_id) return null;
+                        if (!reference.citation_id) return null;
 
-                      const citation = citationById.get(reference.citation_id);
-                      const unifiedMatch = citation
-                        ? describeUnifiedMatchQuality(
-                            citation.retrieval_score,
-                            citation.ambiguity_review_required,
-                            citation.ambiguity_gap,
-                            {
-                              sentenceStatus: sentence.status,
-                              referenceVerified: reference.verified,
-                              referenceQuoteCoverage: referenceQuoteCoverage(
-                                sentence.sentence_text,
-                                reference.reference_quote,
-                              ),
-                              referenceQuoteExactMatch: hasExactQuoteMatch(
-                                citation.text,
-                                reference.reference_quote,
-                              ),
-                              referenceConfidenceLabel: reference.confidence_label,
-                              referenceConfidenceUnknown: reference.confidence_unknown,
-                            },
-                          )
-                        : null;
-                      const pillQuality: MatchQuality = unifiedMatch
-                        ? unifiedMatch.level === "strong" || unifiedMatch.level === "good"
-                          ? "strong"
-                          : unifiedMatch.level === "fair"
-                            ? "partial"
-                            : "none"
-                        : matchQuality;
-                      if (pillQuality === "none") return null;
+                        const citation = citationById.get(
+                          reference.citation_id,
+                        );
+                        const unifiedMatch = citation
+                          ? describeUnifiedMatchQuality(
+                              citation.retrieval_score,
+                              citation.ambiguity_review_required,
+                              citation.ambiguity_gap,
+                              {
+                                sentenceStatus: sentence.status,
+                                referenceVerified: reference.verified,
+                                referenceQuoteCoverage: referenceQuoteCoverage(
+                                  sentence.sentence_text,
+                                  reference.reference_quote,
+                                ),
+                                referenceQuoteExactMatch: hasExactQuoteMatch(
+                                  citation.text,
+                                  reference.reference_quote,
+                                ),
+                                referenceConfidenceLabel:
+                                  reference.confidence_label,
+                                referenceConfidenceUnknown:
+                                  reference.confidence_unknown,
+                              },
+                            )
+                          : null;
+                        const pillQuality: MatchQuality = unifiedMatch
+                          ? unifiedMatch.level === "strong" ||
+                            unifiedMatch.level === "good"
+                            ? "strong"
+                            : unifiedMatch.level === "fair"
+                              ? "partial"
+                              : "none"
+                          : matchQuality;
+                        if (pillQuality === "none") return null;
 
-                      const feedback = citationFeedbackMap.get(
-                        `${sentence.sentence_index}:${reference.citation_id}`,
-                      );
-                      const tooltipQuote = reference.reference_quote?.trim() ?? "";
-                      const tooltipDoc =
-                        reference.document_title?.trim() || "—";
-                      const tooltipMatchLabel =
-                        unifiedMatch?.headline ?? matchQualityTooltipLabel(pillQuality);
+                        const feedback = citationFeedbackMap.get(
+                          `${sentence.sentence_index}:${reference.citation_id}`,
+                        );
+                        const tooltipQuote =
+                          reference.reference_quote?.trim() ?? "";
+                        const tooltipDoc =
+                          reference.document_title?.trim() || "—";
+                        const tooltipMatchLabel =
+                          unifiedMatch?.headline ??
+                          matchQualityTooltipLabel(pillQuality);
 
                         return (
                           <Button
@@ -655,10 +677,23 @@ export function ResponseReview({
                             {displayCitationMap.get(reference.citation_id) ??
                               reference.citation_id}
                             ]
-                            {feedback === "like" && <ThumbsUp aria-label="Liked" className="ml-1 inline" />}
-                            {feedback === "dislike" && <ThumbsDown aria-label="Disliked" className="ml-1 inline" />}
+                            {feedback === "like" && (
+                              <ThumbsUp
+                                aria-label="Liked"
+                                className="ml-1 inline"
+                              />
+                            )}
+                            {feedback === "dislike" && (
+                              <ThumbsDown
+                                aria-label="Disliked"
+                                className="ml-1 inline"
+                              />
+                            )}
                             {!hasCommentOverlay ? (
-                              <span className="citation-pill-tooltip" role="tooltip">
+                              <span
+                                className="citation-pill-tooltip"
+                                role="tooltip"
+                              >
                                 <span className="citation-pill-tooltip-quote">
                                   {tooltipQuote}
                                 </span>
@@ -683,7 +718,9 @@ export function ResponseReview({
                       className="sentence-status-note mt-3 border-warning-medium/70 bg-[var(--warning-surface)] text-[var(--warning-ink)]"
                       data-testid={`sentence-note-${sentence.sentence_index}`}
                     >
-                      <AlertDescription>{sentenceStatusNote(sentence)}</AlertDescription>
+                      <AlertDescription>
+                        {sentenceStatusNote(sentence)}
+                      </AlertDescription>
                     </Alert>
                   ) : null}
                 </div>
