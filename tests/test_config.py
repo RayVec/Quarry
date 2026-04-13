@@ -10,6 +10,7 @@ def test_settings_default_llm_provider_is_openai_compatible(monkeypatch, tmp_pat
     settings = Settings.from_env(config_path=tmp_path / "missing-config.toml")
 
     assert settings.llm_provider == "openai_compatible"
+    assert settings.llm_model == "stepfun/step-3.5-flash:free"
 
 
 def test_settings_from_env_defaults_to_apple_profile_on_apple_silicon(monkeypatch) -> None:
@@ -126,6 +127,7 @@ provider = "gemini"
 
     assert settings.llm_provider == "gemini"
     assert settings.llm_api_key == "gemini-key"
+    assert settings.llm_model == "gemini-3-flash-preview"
     assert settings.has_live_generation_credentials is True
 
 

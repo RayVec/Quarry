@@ -30,6 +30,14 @@ def _is_console_noisy_request(method: str, path: str) -> bool:
     return path.startswith("/api/v1/sessions/")
 
 
+def _cors_origins(settings: Settings) -> list[str]:
+    origins = [settings.cors_origin.strip()]
+    localhost = "http://localhost:5173"
+    if settings.cors_origin.strip() != localhost:
+        origins.append(localhost)
+    return origins
+
+
 def _ensure_runtime_ready(settings: Settings, local_model_status: dict[str, str]) -> None:
     if settings.runtime_mode != "local":
         return
@@ -55,10 +63,8 @@ def _ensure_runtime_ready(settings: Settings, local_model_status: dict[str, str]
         raise RuntimeError(" ".join(errors))
 
 
-def create_app(settings: Settings | None = None) -> FastAPI:
-    settings = settings or Settings.from_env()
+def build_pipeline_service(settings: Settings, *, session_store: SessionStore | None = None) -> PipelineService:
     configure_model_cache(settings)
-    configure_logging(settings.artifacts_dir.parent / "logs", enable_file_logs=settings.trace_logs, category="runtime")
     artifacts_ready = (settings.artifacts_dir / "manifest.json").exists()
     corpus_root = settings.artifacts_dir if artifacts_ready else settings.corpus_dir
     chunk_store = InMemoryChunkStore.from_directory(corpus_root)
@@ -87,7 +93,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         answer_generator=AnswerGenerator(generation_client),
         sentence_regenerator=SentenceRegenerator(),
         verifier=VerificationService(chunk_store=chunk_store, nli_client=nli_client),
-        session_store=SessionStore(),
+        session_store=session_store or SessionStore(),
         scoped_top_k=settings.scoped_retrieval_top_k,
         refinement_token_budget=settings.refinement_token_budget,
         ambiguity_gap_threshold=settings.ambiguity_gap_threshold,
@@ -98,9 +104,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         local_model_status=runtime_profile.local_model_status,
         active_model_ids=runtime_profile.active_model_ids,
     )
+    return pipeline_service
+
+
+def create_app(settings: Settings | None = None, *, config_path: str | None = None) -> FastAPI:
+    settings = settings or Settings.from_env(config_path=config_path)
+    configure_model_cache(settings)
+    configure_logging(settings.artifacts_dir.parent / "logs", enable_file_logs=settings.trace_logs, category="runtime")
+    pipeline_service = build_pipeline_service(settings)
 
     app = FastAPI(title=settings.app_name, version="0.2.0")
     app.state.query_tasks: set[asyncio.Task] = set()
+    app.state.background_error_logger = logger
 
     @app.middleware("http")
     async def trace_requests(request: Request, call_next):
@@ -148,13 +163,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=[settings.cors_origin, "http://localhost:5173"],
+        allow_origins=_cors_origins(settings),
         allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+        allow_headers=["Content-Type", "Authorization"],
     )
     app.state.settings = settings
+    app.state.config_path = config_path
     app.state.pipeline_service = pipeline_service
+
+    def reconfigure_runtime(next_settings: Settings) -> PipelineService:
+        current_service: PipelineService = app.state.pipeline_service
+        next_service = build_pipeline_service(next_settings, session_store=current_service.session_store)
+        app.state.settings = next_settings
+        app.state.pipeline_service = next_service
+        return next_service
+
+    app.state.reconfigure_runtime = reconfigure_runtime
     app.include_router(router)
     return app
 

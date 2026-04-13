@@ -15,6 +15,7 @@ if str(SRC_PATH) not in sys.path:
     sys.path.insert(0, str(SRC_PATH))
 
 from quarry.config import Settings  # noqa: E402
+from quarry.hosted_auth import build_openai_compatible_headers  # noqa: E402
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -70,12 +71,9 @@ def main() -> int:
         return 2
 
     endpoint = f"{base_url}/chat/completions"
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-        "HTTP-Referer": args.site_url,
-        "X-Title": args.app_name,
-    }
+    headers = build_openai_compatible_headers(base_url, api_key)
+    headers["HTTP-Referer"] = args.site_url
+    headers["X-Title"] = args.app_name
     payload = {
         "model": model,
         "temperature": args.temperature,

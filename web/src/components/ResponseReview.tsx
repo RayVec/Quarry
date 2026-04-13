@@ -7,6 +7,10 @@ import {
   useState,
 } from "react";
 import { MessageSquare, ThumbsUp, ThumbsDown } from "lucide-react";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import { Textarea } from "@/components/ui/textarea";
 import type {
   MatchQuality,
   ParsedSentence,
@@ -14,6 +18,11 @@ import type {
   SessionState,
 } from "../types";
 import { buildDisplayCitationMap } from "../utils/citationDisplay";
+import {
+  describeUnifiedMatchQuality,
+  hasExactQuoteMatch,
+  referenceQuoteCoverage,
+} from "../utils/retrievalDisplay";
 
 interface ResponseReviewProps {
   session: SessionState;
@@ -81,6 +90,10 @@ function clampPosition(value: number, min: number, max: number) {
   return Math.min(Math.max(value, min), max);
 }
 
+const COMMENT_GUTTER_INSET = 4;
+const COMMENT_TRIGGER_SIZE = 32;
+const COMMENT_CARD_FALLBACK_WIDTH = 420;
+
 export function ResponseReview({
   session,
   readOnly,
@@ -112,6 +125,13 @@ export function ResponseReview({
   const displayCitationMap = useMemo(
     () => buildDisplayCitationMap(session),
     [session],
+  );
+  const citationById = useMemo(
+    () =>
+      new Map(
+        session.citation_index.map((citation) => [citation.citation_id, citation]),
+      ),
+    [session.citation_index],
   );
   const visibleSentences = useMemo(
     () =>
@@ -149,6 +169,14 @@ export function ResponseReview({
   );
   const hasCommentOverlay = Boolean(selectionDraft || popupState);
 
+  function dismissPopup() {
+    setPopupState(null);
+    setSelectionDraft(null);
+    setDraftNote("");
+    setEditNotes({});
+    window.getSelection()?.removeAllRanges();
+  }
+
   // Measure annotation highlight positions to render margin indicators (Google Docs style)
   useLayoutEffect(() => {
     const container = contentRef.current;
@@ -183,18 +211,26 @@ export function ResponseReview({
       // Never dismiss if clicking inside the popup card
       if (popupRef.current?.contains(target)) return;
 
-      // If click starts inside the text content area, let handleMouseUp decide
-      // whether to keep or replace the draft — don't clear prematurely
+      if (
+        (event.target as HTMLElement).closest?.(
+          '[data-testid="selection-comment-trigger"]',
+        )
+      ) {
+        return;
+      }
+
+      if (popupState) {
+        dismissPopup();
+        return;
+      }
+
       if (contentRef.current?.contains(target)) return;
 
-      // Click outside both popup and content → dismiss everything
-      setPopupState(null);
-      setSelectionDraft(null);
-      setDraftNote("");
+      dismissPopup();
     }
     document.addEventListener("mousedown", handleMouseDown);
     return () => document.removeEventListener("mousedown", handleMouseDown);
-  }, []);
+  }, [popupState]);
 
   function handleMouseUp(event: React.MouseEvent) {
     if (readOnly) return;
@@ -293,23 +329,25 @@ export function ResponseReview({
   const popupPosition = useMemo(() => {
     if (!popupState || !contentRef.current) return null;
     const containerRect = contentRef.current.getBoundingClientRect();
-    const size = 32;
+    const popupWidth = popupRef.current?.offsetWidth ?? COMMENT_CARD_FALLBACK_WIDTH;
+    const left = clampPosition(
+      containerRect.width - popupWidth - COMMENT_GUTTER_INSET,
+      0,
+      Math.max(0, containerRect.width - popupWidth),
+    );
 
     if (popupState.mode === "new" && selectionDraft) {
-      // Card replaces the trigger button — same gutter position
-      const left = containerRect.width - size / 2 - 8;
       const selectionMidpoint =
         (selectionDraft.spanTop + selectionDraft.spanBottom) / 2;
       const top =
         selectionMidpoint -
         containerRect.top +
         contentRef.current.scrollTop -
-        size / 2;
+        COMMENT_TRIGGER_SIZE / 2;
       return { left, top };
     }
 
     // "existing" mode: position near the clicked annotation highlight (convert to container coords)
-    const left = containerRect.width - size / 2 - 8;
     const top =
       popupState.rect.top - containerRect.top + contentRef.current.scrollTop;
     return { left, top };
@@ -318,12 +356,12 @@ export function ResponseReview({
   const triggerPosition = useMemo(() => {
     if (!selectionDraft || !contentRef.current) return null;
     const containerRect = contentRef.current.getBoundingClientRect();
-    const size = 32;
 
-    // Horizontal: place inside the right gutter (after the text column, within padding-right)
-    // containerRect.width is the total width including padding, so text ends at (width - 2.5rem)
-    // We place the button centered in that gutter
-    const left = containerRect.width - size / 2 - 8;
+    // Keep the trigger inside the reserved right gutter so it never widens the page.
+    const left = Math.max(
+      0,
+      containerRect.width - COMMENT_TRIGGER_SIZE - COMMENT_GUTTER_INSET,
+    );
 
     // Vertical: true center across ALL selected lines, relative to the container
     // spanTop/spanBottom are viewport coords; containerRect.top is also viewport
@@ -334,7 +372,7 @@ export function ResponseReview({
       selectionMidpoint -
       containerRect.top +
       contentRef.current.scrollTop -
-      size / 2;
+      COMMENT_TRIGGER_SIZE / 2;
 
     return { left, top };
   }, [selectionDraft]);
@@ -347,14 +385,14 @@ export function ResponseReview({
         ref={contentRef}
       >
         {!paragraphs.length ? (
-          <div className="response-empty-state">
-            <span className="tiny-label">No verified answer to show</span>
-            <p>
+          <Alert className="response-empty-state border-border/70 bg-card/90">
+            <AlertTitle className="tiny-label">No verified answer to show</AlertTitle>
+            <AlertDescription>
               I couldn't prepare a grounded response from the current evidence.
               You can try a narrower question or ask QUARRY to try again with
               different feedback.
-            </p>
-          </div>
+            </AlertDescription>
+          </Alert>
         ) : null}
 
         {paragraphs.map(([paragraphIndex, paragraphSentences]) => (
@@ -488,8 +526,39 @@ export function ResponseReview({
                       );
                     })}{" "}
                     {sentence.references.map((reference, index) => {
-                      if (!reference.citation_id || matchQuality === "none") return null;
-                      
+                      if (!reference.citation_id) return null;
+
+                      const citation = citationById.get(reference.citation_id);
+                      const unifiedMatch = citation
+                        ? describeUnifiedMatchQuality(
+                            citation.retrieval_score,
+                            citation.ambiguity_review_required,
+                            citation.ambiguity_gap,
+                            {
+                              sentenceStatus: sentence.status,
+                              referenceVerified: reference.verified,
+                              referenceQuoteCoverage: referenceQuoteCoverage(
+                                sentence.sentence_text,
+                                reference.reference_quote,
+                              ),
+                              referenceQuoteExactMatch: hasExactQuoteMatch(
+                                citation.text,
+                                reference.reference_quote,
+                              ),
+                              referenceConfidenceLabel: reference.confidence_label,
+                              referenceConfidenceUnknown: reference.confidence_unknown,
+                            },
+                          )
+                        : null;
+                      const pillQuality: MatchQuality = unifiedMatch
+                        ? unifiedMatch.level === "strong" || unifiedMatch.level === "good"
+                          ? "strong"
+                          : unifiedMatch.level === "fair"
+                            ? "partial"
+                            : "none"
+                        : matchQuality;
+                      if (pillQuality === "none") return null;
+
                       const feedback = citationFeedbackMap.get(
                         `${sentence.sentence_index}:${reference.citation_id}`,
                       );
@@ -497,11 +566,11 @@ export function ResponseReview({
                       const tooltipDoc =
                         reference.document_title?.trim() || "—";
                       const tooltipMatchLabel =
-                        matchQualityTooltipLabel(matchQuality);
+                        unifiedMatch?.headline ?? matchQualityTooltipLabel(pillQuality);
 
                       return (
-                        <button
-                          className={`citation-pill citation-pill--${matchQuality} ${reference.replacement_pending ? "replaced" : ""} ${
+                        <Button
+                          className={`citation-pill citation-pill--${pillQuality} ${reference.replacement_pending ? "replaced" : ""} ${
                             hasCommentOverlay
                               ? "tooltip-suppressed"
                               : "citation-pill-tooltip-anchor"
@@ -515,13 +584,14 @@ export function ResponseReview({
                               reference.reference_quote,
                             )
                           }
+                          type="button"
                         >
                           [
                           {displayCitationMap.get(reference.citation_id) ??
                             reference.citation_id}
                           ]
-                          {feedback === "like" && <ThumbsUp size={12} style={{ marginLeft: "4px", display: "inline" }} aria-label="Liked" />}
-                          {feedback === "dislike" && <ThumbsDown size={12} style={{ marginLeft: "4px", display: "inline" }} aria-label="Disliked" />}
+                          {feedback === "like" && <ThumbsUp aria-label="Liked" className="ml-1 inline" />}
+                          {feedback === "dislike" && <ThumbsDown aria-label="Disliked" className="ml-1 inline" />}
                           {!hasCommentOverlay ? (
                             <span className="citation-pill-tooltip" role="tooltip">
                               <span className="citation-pill-tooltip-quote">
@@ -537,18 +607,18 @@ export function ResponseReview({
                               </span>
                             </span>
                           ) : null}
-                        </button>
+                        </Button>
                       );
                     })}
                   </span>
 
                   {sentenceStatusNote(sentence) ? (
-                    <p
-                      className="sentence-status-note"
+                    <Alert
+                      className="sentence-status-note mt-3 border-warning-medium/70 bg-[var(--warning-surface)] text-[var(--warning-ink)]"
                       data-testid={`sentence-note-${sentence.sentence_index}`}
                     >
-                      {sentenceStatusNote(sentence)}
-                    </p>
+                      <AlertDescription>{sentenceStatusNote(sentence)}</AlertDescription>
+                    </Alert>
                   ) : null}
                 </div>
               );
@@ -557,7 +627,7 @@ export function ResponseReview({
         ))}
 
         {selectionDraft && triggerPosition && !popupState ? (
-          <button
+          <Button
             className="selection-comment-trigger"
             data-testid="selection-comment-trigger"
             style={{
@@ -566,6 +636,7 @@ export function ResponseReview({
               position: "absolute",
             }}
             onMouseDown={(e) => e.preventDefault()}
+            type="button"
             onClick={() => {
               setPopupState({
                 mode: "new",
@@ -578,16 +649,19 @@ export function ResponseReview({
           >
             <MessageSquare aria-hidden="true" focusable="false" />
             <span className="sr-only">Add comment</span>
-          </button>
+          </Button>
         ) : null}
 
         {commentIndicators.map((indicator) => {
           const container = contentRef.current;
           if (!container) return null;
           const containerRect = container.getBoundingClientRect();
-          const left = containerRect.width - 16 - 8;
+          const left = Math.max(
+            0,
+            containerRect.width - COMMENT_TRIGGER_SIZE - COMMENT_GUTTER_INSET,
+          );
           return (
-            <button
+            <Button
               key={`comment-indicator-${indicator.commentId}`}
               className="comment-margin-indicator"
               data-testid={`comment-indicator-${indicator.commentId}`}
@@ -597,6 +671,7 @@ export function ResponseReview({
                 position: "absolute",
               }}
               onMouseDown={(e) => e.preventDefault()}
+              type="button"
               onClick={(e) => {
                 openExistingPopup(
                   indicator.commentIds,
@@ -605,13 +680,13 @@ export function ResponseReview({
               }}
             >
               <MessageSquare aria-hidden="true" focusable="false" />
-            </button>
+            </Button>
           );
         })}
 
         {popupState && popupPosition ? (
-          <aside
-            className="selection-comment-card"
+          <Card
+            className="selection-comment-card gap-0 border-border/70 bg-card/98 py-0"
             data-testid="selection-comment-card"
             ref={popupRef}
             style={{
@@ -622,45 +697,52 @@ export function ResponseReview({
             onMouseDown={(e) => e.preventDefault()}
           >
             {popupState.mode === "new" && selectionDraft ? (
-              <div
-                className="selection-comment-compose"
+              <CardContent
+                className="selection-comment-compose p-0"
                 data-testid="selection-comment-editor"
               >
-                <textarea
+                <Textarea
                   autoFocus
                   data-testid="selection-comment-input"
                   value={draftNote}
                   onChange={(event) => setDraftNote(event.target.value)}
                   placeholder="Add a comment"
                 />
-                <button
-                  className="primary-button subtle"
-                  data-testid="save-selection-comment"
-                  disabled={!draftNote.trim()}
-                  onClick={async () => {
-                    await onSaveComment({
-                      text_selection: selectionDraft.text,
-                      char_start: selectionDraft.start,
-                      char_end: selectionDraft.end,
-                      comment_text: draftNote.trim(),
-                    });
-                    startTransition(() => {
-                      setPopupState(null);
-                      setSelectionDraft(null);
-                      setDraftNote("");
-                    });
-                    const selection = window.getSelection();
-                    selection?.removeAllRanges();
-                  }}
-                >
-                  Comment
-                </button>
-              </div>
+                <div className="selection-comment-actions">
+                  <button
+                    className="text-button selection-comment-cancel"
+                    data-testid="cancel-selection-comment"
+                    onClick={dismissPopup}
+                    type="button"
+                  >
+                    Cancel
+                  </button>
+                  <Button
+                    data-testid="save-selection-comment"
+                    disabled={!draftNote.trim()}
+                    type="button"
+                    variant="secondary"
+                    onClick={async () => {
+                      await onSaveComment({
+                        text_selection: selectionDraft.text,
+                        char_start: selectionDraft.start,
+                        char_end: selectionDraft.end,
+                        comment_text: draftNote.trim(),
+                      });
+                      startTransition(() => {
+                        dismissPopup();
+                      });
+                    }}
+                  >
+                    Comment
+                  </Button>
+                </div>
+              </CardContent>
             ) : null}
 
             {popupState.mode === "existing" ? (
-              <div
-                className="selection-comment-thread"
+              <CardContent
+                className="selection-comment-thread p-0"
                 data-testid="selection-comment-active-editor"
               >
                 {popupState.commentIds.map((commentId) => {
@@ -669,7 +751,7 @@ export function ResponseReview({
                   const value = editNotes[commentId] ?? comment.comment_text;
                   return (
                     <div className="selection-comment-item" key={commentId}>
-                      <textarea
+                      <Textarea
                         data-testid={`selection-comment-edit-input-${commentId}`}
                         value={value}
                         onChange={(event) =>
@@ -680,9 +762,10 @@ export function ResponseReview({
                         }
                       />
                       <div className="selection-comment-item-actions">
-                        <button
-                          className="ghost-button"
+                        <Button
                           data-testid={`delete-selection-comment-${commentId}`}
+                          type="button"
+                          variant="ghost"
                           onClick={async () => {
                             await onDeleteComment(commentId);
                             startTransition(() => {
@@ -699,24 +782,25 @@ export function ResponseReview({
                           }}
                         >
                           Delete
-                        </button>
-                        <button
-                          className="primary-button subtle"
+                        </Button>
+                        <Button
                           data-testid={`update-selection-comment-${commentId}`}
                           disabled={!value.trim()}
+                          type="button"
+                          variant="secondary"
                           onClick={async () => {
                             await onUpdateComment(commentId, value.trim());
                           }}
                         >
                           Save
-                        </button>
+                        </Button>
                       </div>
                     </div>
                   );
                 })}
-              </div>
+              </CardContent>
             ) : null}
-          </aside>
+          </Card>
         ) : null}
       </div>
     </section>

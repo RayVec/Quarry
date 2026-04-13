@@ -73,7 +73,7 @@ def test_runtime_hosts_generation_while_leaving_decomposition_local(tmp_path: Pa
 
     assert isinstance(generation, HostedGenerationClient)
     assert decomposition.__class__.__name__ == "HeuristicDecompositionClient"
-    assert runtime_profile.generation_provider == "hosted:gpt-4o-mini"
+    assert runtime_profile.generation_provider == "hosted:stepfun/step-3.5-flash:free"
     assert runtime_profile.local_model_status["generation"] == "hosted"
     assert runtime_profile.local_model_status["decomposition"] == "heuristic"
     assert runtime_profile.local_model_status["metadata"] == "heuristic"

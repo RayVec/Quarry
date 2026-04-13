@@ -59,7 +59,7 @@ mode = "hybrid"
 [hosted]
 provider    = "openai_compatible" # or "gemini"
 llm_api_key = "YOUR_API_KEY_HERE"
-llm_model   = "openai/gpt-4o-mini"
+llm_model   = "stepfun/step-3.5-flash:free"
 ```
 
 Get a free key at [openrouter.ai](https://openrouter.ai) — it gives access to many models including free-tier ones.
@@ -131,11 +131,31 @@ Use OpenAI-compatible providers (default):
 ```toml
 [hosted]
 provider     = "openai_compatible"
-llm_base_url = "https://api.openai.com/v1"      # OpenAI directly
-# llm_base_url = "https://openrouter.ai/api/v1" # OpenRouter (default)
+llm_base_url = "https://openrouter.ai/api/v1"
 llm_api_key  = "YOUR_API_KEY_HERE"
-llm_model    = "gpt-4o"
+llm_model    = "stepfun/step-3.5-flash:free" # or "qwen/qwen3.6-plus"
 ```
+
+Use Azure OpenAI with the OpenAI v1-compatible endpoint:
+
+```toml
+[hosted]
+provider            = "openai_compatible"
+llm_base_url        = "https://YOUR-RESOURCE-NAME.cognitiveservices.azure.com/openai/v1"
+llm_api_key         = "YOUR_AZURE_OPENAI_API_KEY"
+llm_model           = "gpt-5.2-chat"
+use_live_generation = true
+```
+
+Notes:
+
+- keep `provider = "openai_compatible"`
+- Quarry's Azure model-family hint is `gpt-5.2-chat`
+- in the settings UI, paste the full Azure OpenAI v1 URI exactly as Azure gives it to you
+- Quarry also accepts the root Azure endpoint and will normalize it to `/openai/v1`
+- if your Azure deployment name matches the model ID, you can use that model ID directly in `llm_model`
+- if you gave the deployment a custom name, set `llm_model` to that deployment name instead
+- Quarry accepts Azure OpenAI-style v1 endpoints such as `cognitiveservices.azure.com/openai/v1`
 
 Use Google AI Studio (Gemini) for hosted generation:
 
@@ -147,6 +167,8 @@ use_live_generation = true
 ```
 
 Set either `hosted.llm_api_key` in `config.toml` or environment variable `GEMINI_API_KEY`.
+
+Provider model labels and IDs for the settings UI live in `hosted_models.toml`, not in `config.toml`. That file is now the single source of truth for hosted provider models, so keep it in the project when changing supported models.
 
 ### Move the model cache off your main drive
 

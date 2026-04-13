@@ -128,7 +128,7 @@ class VerificationService:
                             },
                         )
                 scoped_candidate_count = len(chunk_ids_in_citations)
-                total_candidate_count = len(self.chunk_store.all_chunks()) if used_fallback else scoped_candidate_count
+                total_candidate_count = self.chunk_store.chunk_count() if used_fallback else scoped_candidate_count
                 self._record_quote_lookup(
                     scoped=True,
                     used_fallback=used_fallback,

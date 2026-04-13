@@ -12,6 +12,44 @@ NO_REF_PATTERN = re.compile(r"\[NO_REF\]")
 NUMBER_PATTERN = re.compile(r"\b\d+(?:\.\d+)?%?\b")
 PROPER_NOUN_PATTERN = re.compile(r"\b[A-Z][a-z]{2,}\b")
 DOMAIN_TERMS = {"schedule", "cost", "risk", "safety", "procurement", "phase", "modular", "project", "construction"}
+NATURAL_SENTENCE_SPLIT_PATTERN = re.compile(r"(?<=[.!?])\s+(?=[\"'“”‘’(\[]?[A-Z0-9])")
+PROTECTED_PERIOD = "<prd>"
+PROTECTED_DECIMAL = "<dec>"
+PROTECTED_ABBREVIATIONS = (
+    "e.g.",
+    "i.e.",
+    "etc.",
+    "Mr.",
+    "Mrs.",
+    "Ms.",
+    "Dr.",
+    "Prof.",
+    "Sr.",
+    "Jr.",
+    "U.S.",
+    "U.K.",
+)
+
+
+def split_natural_sentences(text: str) -> list[str]:
+    normalized = re.sub(r"\s+", " ", text).strip()
+    if not normalized:
+        return []
+
+    protected = re.sub(r"(?<=\d)\.(?=\d)", PROTECTED_DECIMAL, normalized)
+    for abbreviation in PROTECTED_ABBREVIATIONS:
+        protected = protected.replace(abbreviation, abbreviation.replace(".", PROTECTED_PERIOD))
+
+    sentences = [
+        part.replace(PROTECTED_PERIOD, ".").replace(PROTECTED_DECIMAL, ".").strip()
+        for part in NATURAL_SENTENCE_SPLIT_PATTERN.split(protected)
+        if part.strip()
+    ]
+    return sentences
+
+
+def has_multiple_natural_sentences(text: str) -> bool:
+    return len(split_natural_sentences(text)) > 1
 
 
 def parse_generated_response(raw_response: str) -> list[ParsedSentence]:
@@ -95,7 +133,7 @@ def _split_tagged_blocks(raw_response: str) -> list[str]:
 
 
 def _fallback_parse(raw_response: str) -> list[ParsedSentence]:
-    sentences = [sentence.strip() for sentence in re.split(r"(?<=[.!?])\s+", raw_response.strip()) if sentence.strip()]
+    sentences = split_natural_sentences(raw_response.strip())
     parsed: list[ParsedSentence] = []
     for index, sentence in enumerate(sentences):
         refs = [match[0] or match[1] for match in REF_PATTERN.findall(sentence)]

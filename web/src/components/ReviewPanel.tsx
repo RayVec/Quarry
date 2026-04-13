@@ -1,4 +1,5 @@
 import { startTransition, useState } from "react";
+import { Button } from "@/components/ui/button";
 import type { SessionState } from "../types";
 
 interface ReviewPanelProps {
@@ -30,10 +31,10 @@ export function ReviewPanel({
           </div>
         </div>
 
-        <button
-          className="primary-button subtle"
+        <Button
           data-testid="run-refinement"
           disabled={!interactive || !anyFeedback || busy !== null}
+          variant="secondary"
           onClick={async () => {
             setBusy("refine");
             try {
@@ -44,7 +45,7 @@ export function ReviewPanel({
           }}
         >
           {busy === "refine" ? "Refining..." : "Refine"}
-        </button>
+        </Button>
       </div>
     </section>
   );

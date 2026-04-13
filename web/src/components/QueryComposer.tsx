@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState, type Ref } from "react";
+import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
 
 interface QueryComposerProps {
   id: string;
@@ -80,7 +82,7 @@ export function QueryComposer({
         </label>
       ) : null}
       <div className={`composer-surface ${multiline ? "multiline" : "singleline"}`}>
-        <textarea
+        <Textarea
           id={id}
           className="composer-textarea"
           data-testid="query-input"
@@ -101,14 +103,15 @@ export function QueryComposer({
           }}
         />
         <div className="composer-submit-row">
-          <button
-            className="primary-button composer-submit"
+          <Button
+            className="composer-submit h-11"
             data-testid="run-query"
             disabled={!canSubmit}
             type="submit"
+            size="lg"
           >
             {loading ? "Working..." : "Ask QUARRY"}
-          </button>
+          </Button>
         </div>
       </div>
     </form>

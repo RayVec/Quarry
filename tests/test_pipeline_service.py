@@ -15,13 +15,17 @@ from quarry.domain.models import (
     CitationFeedbackType,
     FeedbackState,
     MatchQuality,
+    ParsedSentence,
     QueryProgressStage,
     QueryRequest,
     QueryRunStatus,
     QueryType,
+    Reference,
     ReviewCommentRequest,
     RetrievedPassage,
     SessionState,
+    SentenceStatus,
+    SentenceType,
 )
 from quarry.pipeline.decomposition import QueryDecomposer
 from quarry.pipeline.generation import AnswerGenerator, SentenceRegenerator
@@ -64,7 +68,9 @@ class PassThroughRefineGenerationClient:
         self.requests.append(request)
         if request.mode == "refinement" and request.existing_response:
             return request.existing_response
-        quote = request.citation_index[0].text
+        quote = request.citation_index[0].text.split(". ", 1)[0].strip()
+        if not quote.endswith("."):
+            quote += "."
         return f'[CLAIM] {quote} [REF: "{quote}"]'
 
 
@@ -426,6 +432,102 @@ def test_pipeline_assigns_partial_match_quality_for_partial_confidence() -> None
         claim.references[0].confidence_label = ConfidenceLabel.PARTIALLY_SUPPORTED
     service._annotate_match_quality(session.parsed_sentences)
     assert claim.match_quality == MatchQuality.PARTIAL
+
+
+def test_pipeline_rejects_multi_sentence_tagged_claim_blocks() -> None:
+    chunk_store = InMemoryChunkStore(build_chunks())
+    service = PipelineService(
+        chunk_store=chunk_store,
+        query_decomposer=QueryDecomposer(HeuristicDecompositionClient(), max_facets=4),
+        hybrid_retriever=HybridRetriever(
+            sparse_retriever=KeywordSparseRetriever(chunk_store),
+            dense_retriever=SemanticDenseRetriever(chunk_store),
+            reranker=SimpleCrossEncoderReranker(),
+            sparse_top_k=30,
+            dense_top_k=30,
+            rerank_top_k=20,
+            rrf_k=60,
+        ),
+        answer_generator=AnswerGenerator(DeterministicGenerationClient()),
+        sentence_regenerator=SentenceRegenerator(),
+        verifier=VerificationService(chunk_store=chunk_store, nli_client=HeuristicNLIClient()),
+        session_store=SessionStore(),
+        scoped_top_k=3,
+        refinement_token_budget=8000,
+        ambiguity_gap_threshold=0.05,
+    )
+
+    raw_response = (
+        '[CLAIM] FEED maturity is defined in the report. '
+        'It can also be understood in relation to the broader PDRI framework. '
+        '[REF: "FEED maturity is defined as the degree of completeness of the deliverables to serve as the basis for detailed design at the end of detailed scope (Phase Gate 3)."]'
+    )
+
+    assert service._is_valid_generation(raw_response) is False
+
+
+def test_pipeline_promotes_exact_single_claim_anchor_to_strong_match_quality() -> None:
+    chunk = ChunkObject(
+        chunk_id="pdri-001",
+        document_id="pdri-report",
+        document_title="PDRI Reference",
+        text=(
+            "FEED maturity is defined as the degree of completeness of the deliverables to serve as the basis "
+            "for detailed design at the end of detailed scope (Phase Gate 3). "
+            "The report also situates FEED maturity within the broader PDRI framework."
+        ),
+        section_heading="1.2 FEED Maturity",
+        section_path="Chapter 1 > 1.2 FEED Maturity",
+        page_start=14,
+        page_end=15,
+    )
+    chunk_store = InMemoryChunkStore([chunk])
+    service = PipelineService(
+        chunk_store=chunk_store,
+        query_decomposer=QueryDecomposer(HeuristicDecompositionClient(), max_facets=4),
+        hybrid_retriever=HybridRetriever(
+            sparse_retriever=KeywordSparseRetriever(chunk_store),
+            dense_retriever=SemanticDenseRetriever(chunk_store),
+            reranker=SimpleCrossEncoderReranker(),
+            sparse_top_k=30,
+            dense_top_k=30,
+            rerank_top_k=20,
+            rrf_k=60,
+        ),
+        answer_generator=AnswerGenerator(DeterministicGenerationClient()),
+        sentence_regenerator=SentenceRegenerator(),
+        verifier=VerificationService(chunk_store=chunk_store, nli_client=HeuristicNLIClient()),
+        session_store=SessionStore(),
+        scoped_top_k=3,
+        refinement_token_budget=8000,
+        ambiguity_gap_threshold=0.05,
+    )
+
+    claim = ParsedSentence(
+        sentence_index=0,
+        sentence_text=(
+            "According to the report, FEED maturity is defined as the degree of completeness of the "
+            "deliverables to serve as the basis for detailed design at the end of detailed scope (Phase Gate 3)."
+        ),
+        sentence_type=SentenceType.CLAIM,
+        references=[
+            Reference(
+                reference_quote=(
+                    "FEED maturity is defined as the degree of completeness of the deliverables to serve as the basis "
+                    "for detailed design at the end of detailed scope (Phase Gate 3)."
+                ),
+                matched_chunk_id="pdri-001",
+                verified=True,
+                confidence_label=ConfidenceLabel.PARTIALLY_SUPPORTED,
+                citation_id=1,
+            )
+        ],
+        status=SentenceStatus.PARTIALLY_VERIFIED,
+    )
+
+    service._annotate_match_quality([claim])
+
+    assert claim.match_quality == MatchQuality.STRONG
 
 
 def test_run_query_for_session_marks_failed_stage_on_unhandled_error() -> None:

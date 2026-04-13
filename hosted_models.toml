@@ -1,0 +1,18 @@
+[providers.openrouter]
+models = [
+  { id = "stepfun/step-3.5-flash:free", label = "Step 3.5 Flash", description = "Free OpenRouter route for StepFun Step 3.5 Flash." },
+  { id = "qwen/qwen3.6-plus", label = "Qwen3.6 Plus", description = "OpenRouter route for Qwen3.6 Plus." },
+]
+
+[providers.azure_openai]
+models = [
+  { id = "gpt-5.2-chat", label = "GPT-5.2", description = "Azure GPT-5.2 deployment family." },
+]
+
+[providers.gemini]
+models = [
+  { id = "gemini-3-flash-preview", label = "Gemini 3 Flash", description = "Gemini 3 Flash preview in Google AI Studio." },
+]
+
+[providers.custom_openai_compatible]
+models = []

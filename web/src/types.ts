@@ -8,13 +8,20 @@ export type QueryProgressStage =
   | "searching"
   | "evidence"
   | "writing"
+  | "coverage_check"
+  | "followup_retrieval"
   | "checking"
-  | "clarification"
   | "completed"
   | "failed";
 
 export type RuntimeMode = "local" | "hybrid" | "hosted";
 export type RuntimeProfile = "apple_silicon" | "gpu";
+export type HostedProviderPreset =
+  | "openai"
+  | "openrouter"
+  | "azure_openai"
+  | "gemini"
+  | "custom_openai_compatible";
 
 export type SentenceStatus =
   | "verified"
@@ -161,4 +168,76 @@ export interface SessionState {
 
 export interface SessionEnvelope {
   session: SessionState;
+}
+
+export interface HostedModelOption {
+  id: string;
+  label: string;
+  description: string;
+}
+
+export interface HostedProviderDescriptor {
+  preset: HostedProviderPreset;
+  label: string;
+  provider_family: string;
+  description: string;
+  model_label: string;
+  notes: string[];
+  requires_base_url: boolean;
+  requires_deployment_name: boolean;
+  supports_custom_model: boolean;
+  models: HostedModelOption[];
+}
+
+export interface HostedEnvOverride {
+  field: string;
+  env_var: string;
+}
+
+export interface HostedSettingsState {
+  config_path: string;
+  config_exists: boolean;
+  provider_preset: HostedProviderPreset;
+  llm_provider: string;
+  runtime_mode: RuntimeMode;
+  api_key_configured: boolean;
+  base_url?: string | null;
+  selected_model_id?: string | null;
+  custom_model_id?: string | null;
+  azure_base_url?: string | null;
+  azure_deployment_name?: string | null;
+  azure_model_family?: string | null;
+  custom_base_url?: string | null;
+  env_overrides: HostedEnvOverride[];
+  notices: string[];
+  saved_provider_settings: Partial<
+    Record<HostedProviderPreset, HostedSavedProviderState>
+  >;
+}
+
+export interface HostedSavedProviderState {
+  api_key_configured: boolean;
+  selected_model_id?: string | null;
+  custom_model_id?: string | null;
+  azure_base_url?: string | null;
+  azure_deployment_name?: string | null;
+  azure_model_family?: string | null;
+  custom_base_url?: string | null;
+}
+
+export interface HostedSettingsEnvelope {
+  settings: HostedSettingsState;
+  providers: HostedProviderDescriptor[];
+}
+
+export interface HostedSettingsUpdatePayload {
+  provider_preset: HostedProviderPreset;
+  selected_model_id?: string | null;
+  custom_model_id?: string | null;
+  api_key?: string | null;
+  clear_api_key: boolean;
+  custom_base_url?: string | null;
+  azure_base_url?: string | null;
+  azure_deployment_name?: string | null;
+  azure_model_family?: string | null;
 }

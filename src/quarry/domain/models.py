@@ -84,6 +84,14 @@ class RuntimeProfile(str, Enum):
     FULL_LOCAL_TRANSFORMERS = "gpu"
 
 
+class HostedProviderPreset(str, Enum):
+    OPENAI = "openai"
+    OPENROUTER = "openrouter"
+    AZURE_OPENAI = "azure_openai"
+    GEMINI = "gemini"
+    CUSTOM_OPENAI_COMPATIBLE = "custom_openai_compatible"
+
+
 class UIMessageLevel(str, Enum):
     INFO = "info"
     WARNING = "warning"
@@ -257,6 +265,12 @@ class UIMessage(BaseModel):
     message: str
 
 
+class ApiError(BaseModel):
+    code: str
+    message: str
+    details: dict[str, str | int | float | bool | None] | None = None
+
+
 class RetrieverDiagnostic(BaseModel):
     retriever: str
     result_count: int
@@ -388,6 +402,10 @@ class CitationReplaceRequest(BaseModel):
     replacement_citation_id: int
 
 
+class ScopedRetrievalRequest(BaseModel):
+    sentence_index: int = Field(ge=0)
+
+
 class ScopedRetrievalEnvelope(BaseModel):
     citations: list[CitationIndexEntry]
 
@@ -396,6 +414,76 @@ class ScopedRetrievalEnvelope(BaseModel):
 
 class SessionEnvelope(BaseModel):
     session: SessionState
+
+
+class HostedModelOption(BaseModel):
+    id: str
+    label: str
+    description: str = ""
+
+
+class HostedProviderDescriptor(BaseModel):
+    preset: HostedProviderPreset
+    label: str
+    provider_family: str
+    description: str
+    model_label: str
+    notes: list[str] = Field(default_factory=list)
+    requires_base_url: bool = False
+    requires_deployment_name: bool = False
+    supports_custom_model: bool = True
+    models: list[HostedModelOption] = Field(default_factory=list)
+
+
+class HostedEnvOverride(BaseModel):
+    field: str
+    env_var: str
+
+
+class HostedSettingsState(BaseModel):
+    config_path: str
+    config_exists: bool
+    provider_preset: HostedProviderPreset
+    llm_provider: str
+    runtime_mode: RuntimeMode
+    api_key_configured: bool
+    base_url: str | None = None
+    selected_model_id: str | None = None
+    custom_model_id: str | None = None
+    azure_base_url: str | None = None
+    azure_deployment_name: str | None = None
+    azure_model_family: str | None = None
+    custom_base_url: str | None = None
+    env_overrides: list[HostedEnvOverride] = Field(default_factory=list)
+    notices: list[str] = Field(default_factory=list)
+    saved_provider_settings: dict[HostedProviderPreset, "HostedSavedProviderState"] = Field(default_factory=dict)
+
+
+class HostedSavedProviderState(BaseModel):
+    api_key_configured: bool = False
+    selected_model_id: str | None = None
+    custom_model_id: str | None = None
+    azure_base_url: str | None = None
+    azure_deployment_name: str | None = None
+    azure_model_family: str | None = None
+    custom_base_url: str | None = None
+
+
+class HostedSettingsEnvelope(BaseModel):
+    settings: HostedSettingsState
+    providers: list[HostedProviderDescriptor]
+
+
+class HostedSettingsUpdateRequest(BaseModel):
+    provider_preset: HostedProviderPreset
+    selected_model_id: str | None = None
+    custom_model_id: str | None = None
+    api_key: str | None = None
+    clear_api_key: bool = False
+    custom_base_url: str | None = None
+    azure_base_url: str | None = None
+    azure_deployment_name: str | None = None
+    azure_model_family: str | None = None
 
 
 class ParsedBlock(BaseModel):

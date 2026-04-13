@@ -16,6 +16,9 @@ class ChunkStore(Protocol):
     def all_chunks(self) -> list[ChunkObject]:
         ...
 
+    def chunk_count(self) -> int:
+        ...
+
     def get_chunk(self, chunk_id: str) -> ChunkObject | None:
         ...
 

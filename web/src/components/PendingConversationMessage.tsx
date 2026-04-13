@@ -1,3 +1,5 @@
+import { Badge } from "@/components/ui/badge";
+import { CardContent, CardHeader } from "@/components/ui/card";
 import type { QueryProgressStage, QueryRunStatus, SessionState } from "../types";
 
 interface PendingConversationMessageProps {
@@ -58,18 +60,18 @@ export function PendingConversationMessage({ session }: PendingConversationMessa
   const isFailed = stageState.status === "failed";
 
   return (
-    <article
+    <section
       className={`thread-message assistant-message pending ${isFailed ? "failed" : ""}`}
       data-testid="pending-response"
     >
-      <div className="thread-message-header">
+      <CardHeader className="thread-message-header">
         <div>
           <span className="eyebrow">QUARRY response</span>
         </div>
-        {isFailed ? <span className="pending-status-chip">Needs retry</span> : null}
-      </div>
+        {isFailed ? <Badge className="pending-status-chip">Needs retry</Badge> : null}
+      </CardHeader>
 
-      <div className="pending-stage-list" aria-live="polite">
+      <CardContent className="pending-stage-list" aria-live="polite">
         {PENDING_STAGES.map((stage, index) => {
           const status =
             stageIndex < 0 ? "upcoming" : index < stageIndex ? "done" : index === stageIndex ? "active" : "upcoming";
@@ -83,7 +85,7 @@ export function PendingConversationMessage({ session }: PendingConversationMessa
             </div>
           );
         })}
-      </div>
-    </article>
+      </CardContent>
+    </section>
   );
 }

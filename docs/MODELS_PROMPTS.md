@@ -201,7 +201,7 @@ Current config knobs:
 
 Provider-specific behavior:
 
-- `openai_compatible` uses `hosted.llm_base_url` + `hosted.llm_api_key` for chat-style tasks (generation, and optionally decomposition / metadata enrichment when the toggles above are on)
+- `openai_compatible` uses `hosted.llm_base_url` + `hosted.llm_api_key` for chat-style tasks (generation, and optionally decomposition / metadata enrichment when the toggles above are on); Azure OpenAI should use the `https://<resource>.openai.azure.com/openai/v1` route and the deployed model name
 - `gemini` uses `hosted.llm_api_key` (or environment variable `GEMINI_API_KEY`) for **generation only** (`use_live_generation`); the Google client prepends `SHARED_SYSTEM_PROMPT` into the same user-facing content via `with_shared_system_prompt` (no separate chat `system` role)
 - Hosted decomposition and metadata enrichment, when enabled, use the same OpenAI-compatible HTTP stack as generation (`OpenAICompatibleLLM`), not the Gemini client
 

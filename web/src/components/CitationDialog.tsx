@@ -6,17 +6,33 @@ import {
   useRef,
   useState,
 } from "react";
-import { Check, Minus, ThumbsUp, ThumbsDown, X } from "lucide-react";
+import { Check, Minus, ThumbsDown, ThumbsUp, X } from "lucide-react";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Separator } from "@/components/ui/separator";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
 import { api } from "../api";
 import type { CitationIndexEntry, Reference, SessionState } from "../types";
 import { buildDisplayCitationMap } from "../utils/citationDisplay";
-import { lockBodyScroll, unlockBodyScroll } from "../utils/bodyScrollLock";
-import type { MatchQuality } from "../types";
+import {
+  describeUnifiedMatchQuality,
+  hasExactQuoteMatch,
+  referenceQuoteCoverage,
+  type UnifiedMatchLevel,
+} from "../utils/retrievalDisplay";
 
 const MATCH_QUALITY_ICON_SIZE = 18;
 const MATCH_QUALITY_ICON_STROKE = 2.3;
+const COLLAPSED_QUOTE_HEIGHT_PX = 184;
 
-function MatchQualityIcon({ level }: { level: MatchQuality }) {
+function MatchQualityIcon({ level }: { level: UnifiedMatchLevel }) {
   const common = {
     size: MATCH_QUALITY_ICON_SIZE,
     strokeWidth: MATCH_QUALITY_ICON_STROKE,
@@ -24,13 +40,14 @@ function MatchQualityIcon({ level }: { level: MatchQuality }) {
   };
   switch (level) {
     case "strong":
+    case "good":
       return <Check {...common} />;
-    case "partial":
+    case "fair":
       return <Minus {...common} />;
-    case "none":
-      return null;
-    default:
+    case "weak":
       return <X {...common} />;
+    default:
+      return null;
   }
 }
 
@@ -72,13 +89,33 @@ function CitationQuotePanel({
   useLayoutEffect(() => {
     const el = measureRef.current;
     if (!el) return;
+
     const measure = () => {
-      const maxPx = window.innerHeight * 0.5;
-      setNeedsToggle(el.scrollHeight > maxPx + 1);
+      setNeedsToggle(el.scrollHeight > COLLAPSED_QUOTE_HEIGHT_PX + 1);
     };
+
     measure();
-    window.addEventListener("resize", measure);
-    return () => window.removeEventListener("resize", measure);
+    const resizeObserver = new ResizeObserver(measure);
+    resizeObserver.observe(el);
+
+    const fonts = document.fonts;
+    let cancelled = false;
+    if (fonts?.ready) {
+      void fonts.ready.then(() => {
+        if (!cancelled) {
+          measure();
+        }
+      });
+    }
+
+    return () => {
+      cancelled = true;
+      resizeObserver.disconnect();
+    };
+  }, [text, referenceQuote]);
+
+  useEffect(() => {
+    setExpanded(false);
   }, [text, referenceQuote]);
 
   return (
@@ -94,11 +131,11 @@ function CitationQuotePanel({
       </div>
       {needsToggle ? (
         <button
-          type="button"
-          className="text-button quoted-passage-toggle"
-          data-testid="citation-quote-read-more"
           aria-expanded={expanded}
+          className="quoted-passage-toggle"
+          data-testid="citation-quote-read-more"
           onClick={() => setExpanded((value) => !value)}
+          type="button"
         >
           {expanded ? "Show less" : "Read more"}
         </button>
@@ -121,11 +158,11 @@ export function CitationDialog({
   const [alternatives, setAlternatives] = useState<CitationIndexEntry[]>([]);
   const [loadingAlternatives, setLoadingAlternatives] = useState(false);
   const [expandedAlternatives, setExpandedAlternatives] = useState<Set<number>>(new Set());
-  
+
   const currentFeedback = useMemo(() => {
     const feedback = session.feedback.citation_feedback?.find(
       (fb) =>
-        fb.sentence_index === sentenceIndex && fb.citation_id === citation.citation_id
+        fb.sentence_index === sentenceIndex && fb.citation_id === citation.citation_id,
     );
     return feedback?.feedback_type ?? "neutral";
   }, [session.feedback.citation_feedback, sentenceIndex, citation.citation_id]);
@@ -162,34 +199,31 @@ export function CitationDialog({
     );
   }, [sourceSentence, citation.citation_id, referenceQuote]);
   const matchQuality = useMemo(() => {
-    const level: MatchQuality = sourceSentence?.match_quality ?? "none";
-    if (level === "strong") {
-      return {
-        level,
-        headline: "Strong match",
-        detail: "This passage clearly supports the sentence.",
-      };
-    }
-    if (level === "partial") {
-      return {
-        level,
-        headline: "Partial match",
-        detail:
-          "This passage is grounded, but you may want to inspect the source context.",
-      };
-    }
-    return {
-      level,
-      headline: "No citation expected",
-      detail:
-        "This sentence is structural or inferential, so no citation badge is shown in the response.",
-    };
-  }, [sourceSentence?.match_quality]);
-
-  useEffect(() => {
-    lockBodyScroll();
-    return () => unlockBodyScroll();
-  }, []);
+    return describeUnifiedMatchQuality(
+      citation.retrieval_score,
+      citation.ambiguity_review_required,
+      citation.ambiguity_gap,
+      {
+        sentenceStatus: sourceSentence?.status,
+        referenceVerified: sourceReference?.verified,
+        referenceQuoteCoverage: referenceQuoteCoverage(sourceSentence?.sentence_text, referenceQuote),
+        referenceQuoteExactMatch: hasExactQuoteMatch(citation.text, referenceQuote),
+        referenceConfidenceLabel: sourceReference?.confidence_label,
+        referenceConfidenceUnknown: sourceReference?.confidence_unknown,
+      },
+    );
+  }, [
+    citation.ambiguity_gap,
+    citation.ambiguity_review_required,
+    citation.retrieval_score,
+    citation.text,
+    referenceQuote,
+    sourceReference?.confidence_label,
+    sourceReference?.confidence_unknown,
+    sourceReference?.verified,
+    sourceSentence?.status,
+    sourceSentence?.sentence_text,
+  ]);
 
   useEffect(() => {
     if (!(currentFeedback === "dislike" && showAlternativesSection)) {
@@ -208,12 +242,12 @@ export function CitationDialog({
       session.session_id,
       sentenceIndex,
       citation.citation_id,
-      newFeedbackType
+      newFeedbackType,
     );
     startTransition(() => {
       onSessionUpdate(response.session);
     });
-    
+
     if (newFeedbackType === "dislike") {
       setShowAlternativesSection(true);
       setAlternatives([]);
@@ -228,7 +262,7 @@ export function CitationDialog({
     try {
       const altResponse = await api.getCitationAlternatives(
         session.session_id,
-        citation.citation_id
+        citation.citation_id,
       );
       setAlternatives(altResponse.citations.slice(0, 3));
     } catch (error) {
@@ -243,7 +277,7 @@ export function CitationDialog({
       session.session_id,
       sentenceIndex,
       citation.citation_id,
-      replacementCitationId
+      replacementCitationId,
     );
     startTransition(() => {
       onSessionUpdate(response.session);
@@ -254,7 +288,7 @@ export function CitationDialog({
   }
 
   function toggleExpandAlternative(citationId: number) {
-    setExpandedAlternatives(prev => {
+    setExpandedAlternatives((prev) => {
       const next = new Set(prev);
       if (next.has(citationId)) {
         next.delete(citationId);
@@ -266,172 +300,195 @@ export function CitationDialog({
   }
 
   return (
-    <div className="drawer-backdrop" onClick={onClose}>
-      <aside
-        className="citation-drawer"
+    <Sheet open onOpenChange={(nextOpen) => !nextOpen && onClose()}>
+      <SheetContent
+        className="citation-drawer h-dvh w-full overflow-hidden border-l border-border/70 bg-background/98 px-0 sm:w-[40rem] sm:max-w-[40rem]"
         data-testid="citation-dialog"
-        onClick={(event) => event.stopPropagation()}
+        side="right"
       >
-        <div className="drawer-header">
-          <div>
-            <span className="eyebrow">Citation [{displayCitationId}]</span>
-          </div>
-          <button
-            type="button"
-            className="icon-button drawer-close-trigger"
-            data-testid="close-citation-dialog"
-            aria-label="Close citation"
-            onClick={onClose}
-          >
-            <X aria-hidden size={20} strokeWidth={2} />
-          </button>
-        </div>
+        <SheetHeader className="gap-3 px-8 pt-8 pb-6">
+          <span className="eyebrow">Citation [{displayCitationId}]</span>
+          <SheetTitle className="text-3xl font-semibold tracking-tight text-foreground">
+            Review citation support
+          </SheetTitle>
+          <SheetDescription>
+            Inspect the supporting passage, match quality, and citation feedback for this sentence.
+          </SheetDescription>
+        </SheetHeader>
 
-        <div ref={drawerStackRef} className="drawer-stack">
-          <section className="drawer-section">
-            <span className="tiny-label">Reference quote in context</span>
-            <CitationQuotePanel
-              key={citation.citation_id}
-              text={citation.text}
-              referenceQuote={referenceQuote}
-            />
-          </section>
+        <div
+          ref={drawerStackRef}
+          className="drawer-stack flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto overscroll-contain px-8 pb-8"
+        >
+          <Card className="border-border/70 bg-card/95 overflow-visible">
+            <CardHeader>
+              <CardTitle className="tiny-label">Reference quote in context</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <CitationQuotePanel
+                key={citation.citation_id}
+                referenceQuote={referenceQuote}
+                text={citation.text}
+              />
+            </CardContent>
+          </Card>
 
-          <div className="citation-drawer-doc-page-row">
-            <div className="citation-drawer-doc-page-column">
-              <section className="drawer-section citation-drawer-info-card">
-                <span className="tiny-label">Document</span>
-                <p className="citation-drawer-info-value">
-                  {citation.document_title}
-                </p>
-              </section>
+          <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)]">
+            <div className="flex flex-col gap-4">
+              <Card className="border-border/70 bg-card/95">
+                <CardHeader>
+                  <CardTitle className="tiny-label">Document</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <p className="citation-drawer-info-value">{citation.document_title}</p>
+                </CardContent>
+              </Card>
 
-              <section className="drawer-section citation-drawer-info-card">
-                <span className="tiny-label">Page</span>
-                <p className="citation-drawer-info-value">
-                  {citation.page_end != null &&
-                  citation.page_end !== citation.page_number
-                    ? `${citation.page_number}-${citation.page_end}`
-                    : `${citation.page_number}`}
-                </p>
-              </section>
+              <Card className="border-border/70 bg-card/95">
+                <CardHeader>
+                  <CardTitle className="tiny-label">Page</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <p className="citation-drawer-info-value">
+                    {citation.page_end != null && citation.page_end !== citation.page_number
+                      ? `${citation.page_number}-${citation.page_end}`
+                      : `${citation.page_number}`}
+                  </p>
+                </CardContent>
+              </Card>
             </div>
 
-            <section className="drawer-section citation-drawer-info-card citation-drawer-info-card--match-quality">
-              <span className="tiny-label">Match quality</span>
-              <div
-                className={`retrieval-strength retrieval-strength--${matchQuality.level === "partial" ? "fair" : matchQuality.level}`}
-              >
-                <div className="retrieval-strength-headline-row">
-                  <span className="retrieval-strength-icon">
-                    <MatchQualityIcon level={matchQuality.level} />
-                  </span>
-                  <p className="retrieval-strength-headline">
-                    {matchQuality.headline}
-                  </p>
+            <Card className="border-border/70 bg-card/95">
+              <CardHeader>
+                <CardTitle className="tiny-label">Match quality</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div
+                  className={`retrieval-strength retrieval-strength--${matchQuality.level}`}
+                >
+                  <div className="retrieval-strength-headline-row">
+                    <span className="retrieval-strength-icon">
+                      <MatchQualityIcon level={matchQuality.level} />
+                    </span>
+                    <p className="retrieval-strength-headline">{matchQuality.headline}</p>
+                  </div>
+                  <p className="retrieval-strength-detail">{matchQuality.detail}</p>
                 </div>
-                <p className="retrieval-strength-detail">
-                  {matchQuality.detail}
-                </p>
-              </div>
-            </section>
+              </CardContent>
+            </Card>
           </div>
 
-          <section className="drawer-section">
-            <span className="tiny-label">Citation feedback</span>
-            <div className="drawer-action-row drawer-action-row--space-evenly" style={{ gap: "8px" }}>
-              <button
+          <Card className="border-border/70 bg-card/95">
+            <CardHeader>
+              <CardTitle className="tiny-label">Citation feedback</CardTitle>
+            </CardHeader>
+            <CardContent className="flex flex-wrap gap-3">
+              <Button
                 data-testid="like-citation"
-                className={currentFeedback === "like" ? "primary-button" : "ghost-button"}
                 disabled={readOnly || loadingAlternatives}
                 onClick={() => handleFeedback("like")}
-                style={{ display: "flex", alignItems: "center", gap: "6px" }}
+                type="button"
+                variant={currentFeedback === "like" ? "default" : "outline"}
               >
-                <ThumbsUp size={16} aria-hidden />
+                <ThumbsUp data-icon="inline-start" />
                 {currentFeedback === "like" ? "Liked" : "Like"}
-              </button>
-              <button
+              </Button>
+              <Button
                 data-testid="dislike-citation"
-                className={currentFeedback === "dislike" ? "primary-button" : "ghost-button"}
                 disabled={readOnly || loadingAlternatives}
                 onClick={() => handleFeedback("dislike")}
-                style={{ display: "flex", alignItems: "center", gap: "6px" }}
+                type="button"
+                variant={currentFeedback === "dislike" ? "default" : "outline"}
               >
-                <ThumbsDown size={16} aria-hidden />
+                <ThumbsDown data-icon="inline-start" />
                 {currentFeedback === "dislike" ? "Disliked" : "Dislike"}
-              </button>
-            </div>
-          </section>
+              </Button>
+            </CardContent>
+          </Card>
 
-          {currentFeedback === "dislike" && showAlternativesSection && (
-            <section className="drawer-section" style={{ backgroundColor: "#f9fafb", padding: "16px", borderRadius: "8px" }}>
-              <span className="tiny-label" style={{ marginBottom: "8px", display: "block" }}>
-                You can select similar passages to replace
-              </span>
-              
-              {alternatives.length === 0 ? (
-                <button
-                  data-testid="load-alternatives"
-                  className="primary-button"
-                  disabled={readOnly || loadingAlternatives}
-                  onClick={handleLoadAlternatives}
-                  style={{ width: "100%" }}
-                >
-                  {loadingAlternatives ? "Searching..." : "Show me similar passages"}
-                </button>
-              ) : (
-                <div className="candidate-list">
-                  {alternatives.map((alt) => {
-                    const isExpanded = expandedAlternatives.has(alt.citation_id);
-                    return (
-                      <article 
-                        className="candidate-item" 
-                        key={alt.citation_id}
-                        style={{ marginBottom: "16px" }}
-                      >
-                        <div style={{ marginBottom: "8px", fontSize: "0.875rem", color: "#666" }}>
-                          <strong>{alt.document_title}</strong>
-                          {alt.section_heading && <span> • {alt.section_heading}</span>}
-                          <span> (Page {alt.page_number})</span>
-                        </div>
-                        <p 
-                          style={{ 
-                            display: "-webkit-box",
-                            WebkitLineClamp: isExpanded ? "unset" : 6,
-                            WebkitBoxOrient: "vertical",
-                            overflow: "hidden",
-                            marginBottom: "12px",
-                            lineHeight: "1.5"
-                          }}
-                        >
-                          {alt.text}
-                        </p>
-                        <div style={{ display: "flex", gap: "8px" }}>
-                          <button
-                            data-testid={`expand-alternative-${alt.citation_id}`}
-                            className="ghost-button citation-alt-action-button"
-                            onClick={() => toggleExpandAlternative(alt.citation_id)}
-                          >
-                            {isExpanded ? "Show less" : "Show more"}
-                          </button>
-                          <button
-                            data-testid={`replace-with-alternative-${alt.citation_id}`}
-                            className="primary-button subtle citation-alt-action-button"
-                            disabled={readOnly}
-                            onClick={() => handleReplaceWithAlternative(alt.citation_id)}
-                          >
-                            Replace with this passage
-                          </button>
-                        </div>
-                      </article>
-                    );
-                  })}
-                </div>
-              )}
-            </section>
-          )}
+          {currentFeedback === "dislike" && showAlternativesSection ? (
+            <Card className="border-border/70 bg-muted/40">
+              <CardHeader>
+                <CardTitle className="tiny-label">
+                  You can select similar passages to replace
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                {alternatives.length === 0 ? (
+                  <Button
+                    className="w-full"
+                    data-testid="load-alternatives"
+                    disabled={readOnly || loadingAlternatives}
+                    onClick={handleLoadAlternatives}
+                    type="button"
+                  >
+                    {loadingAlternatives ? "Searching..." : "Show me similar passages"}
+                  </Button>
+                ) : (
+                  <div className="candidate-list flex flex-col gap-4">
+                    {alternatives.map((alt) => {
+                      const isExpanded = expandedAlternatives.has(alt.citation_id);
+                      return (
+                        <Card className="candidate-item border-border/70 bg-card/95" key={alt.citation_id}>
+                          <CardContent className="flex flex-col gap-3">
+                            <div className="text-sm text-muted-foreground">
+                              <strong>{alt.document_title}</strong>
+                              {alt.section_heading ? <span> • {alt.section_heading}</span> : null}
+                              <span> (Page {alt.page_number})</span>
+                            </div>
+                            <p
+                              style={{
+                                display: "-webkit-box",
+                                WebkitLineClamp: isExpanded ? "unset" : 6,
+                                WebkitBoxOrient: "vertical",
+                                overflow: "hidden",
+                                lineHeight: "1.5",
+                              }}
+                            >
+                              {alt.text}
+                            </p>
+                            <Separator />
+                            <div className="flex flex-wrap gap-2">
+                              <Button
+                                className="citation-alt-action-button"
+                                data-testid={`expand-alternative-${alt.citation_id}`}
+                                onClick={() => toggleExpandAlternative(alt.citation_id)}
+                                type="button"
+                                variant="ghost"
+                              >
+                                {isExpanded ? "Show less" : "Show more"}
+                              </Button>
+                              <Button
+                                className="citation-alt-action-button"
+                                data-testid={`replace-with-alternative-${alt.citation_id}`}
+                                disabled={readOnly}
+                                onClick={() => handleReplaceWithAlternative(alt.citation_id)}
+                                type="button"
+                                variant="secondary"
+                              >
+                                Replace with this passage
+                              </Button>
+                            </div>
+                          </CardContent>
+                        </Card>
+                      );
+                    })}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          ) : null}
+
+          {!sourceReference ? (
+            <Alert>
+              <AlertTitle>Reference metadata unavailable</AlertTitle>
+              <AlertDescription>
+                The supporting sentence is available, but the exact reference metadata could not be resolved from this session snapshot.
+              </AlertDescription>
+            </Alert>
+          ) : null}
         </div>
-      </aside>
-    </div>
+      </SheetContent>
+    </Sheet>
   );
 }

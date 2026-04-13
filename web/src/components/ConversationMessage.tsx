@@ -1,26 +1,17 @@
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { ResponseReview } from "./ResponseReview";
 import { ReviewPanel } from "./ReviewPanel";
+import { useThreadActions } from "../context/threadActions";
 import type { ParsedSentence, SessionState } from "../types";
 
 export type AssistantMessageSource = "query" | "refinement";
 
 interface ConversationMessageProps {
+  entryId: string;
   source: AssistantMessageSource;
   session: SessionState;
   interactive: boolean;
-  onOpenCitation: (session: SessionState, sentence: ParsedSentence, citationId: number, referenceQuote: string, readOnly: boolean) => void;
-  onSaveComment: (
-    session: SessionState,
-    payload: {
-      text_selection: string;
-      char_start: number;
-      char_end: number;
-      comment_text: string;
-    },
-  ) => Promise<void>;
-  onUpdateComment: (session: SessionState, commentId: string, commentText: string) => Promise<void>;
-  onDeleteComment: (session: SessionState, commentId: string) => Promise<void>;
-  onRefine: () => Promise<void>;
 }
 
 function messageTitle(source: AssistantMessageSource, session: SessionState) {
@@ -51,47 +42,57 @@ function removedSentenceBanner(session: SessionState) {
 }
 
 export function ConversationMessage({
+  entryId,
   source,
   session,
   interactive,
-  onOpenCitation,
-  onSaveComment,
-  onUpdateComment,
-  onDeleteComment,
-  onRefine,
 }: ConversationMessageProps) {
   const readOnly = !interactive;
+  const actions = useThreadActions();
 
   return (
-    <article className={`thread-message assistant-message ${readOnly ? "archived" : "interactive"}`}>
-      <div className="thread-message-header">
+    <section className={`thread-message assistant-message ${readOnly ? "archived" : "interactive"}`}>
+      <CardHeader className="thread-message-header">
         <div>
           <span className="eyebrow">{messageTitle(source, session)}</span>
-          {source !== "query" ? <p className="message-subtitle">Appended below the prior answer for comparison.</p> : null}
+          <CardTitle className="sr-only">{messageTitle(source, session)}</CardTitle>
+          {source !== "query" ? (
+            <CardDescription className="message-subtitle">
+              Appended below the prior answer for comparison.
+            </CardDescription>
+          ) : null}
         </div>
-      </div>
+      </CardHeader>
 
-      {messageLead(session) ? <p className="assistant-lead">{messageLead(session)}</p> : null}
-      {removedSentenceBanner(session) ? <div className="response-warning-banner">{removedSentenceBanner(session)}</div> : null}
+      <CardContent className="flex flex-col gap-4">
+        {messageLead(session) ? <p className="assistant-lead">{messageLead(session)}</p> : null}
+        {removedSentenceBanner(session) ? (
+          <Alert className="response-warning-banner border-warning-medium/70 bg-[var(--warning-surface)] text-[var(--warning-ink)]">
+            <AlertDescription>{removedSentenceBanner(session)}</AlertDescription>
+          </Alert>
+        ) : null}
 
-      <ResponseReview
-        session={session}
-        readOnly={readOnly}
-        onOpenCitation={(sentence, citationId, referenceQuote) =>
-          onOpenCitation(session, sentence, citationId, referenceQuote, readOnly)
-        }
-        onSaveComment={(payload) => onSaveComment(session, payload)}
-        onUpdateComment={(commentId, commentText) => onUpdateComment(session, commentId, commentText)}
-        onDeleteComment={(commentId) => onDeleteComment(session, commentId)}
-      />
+        <ResponseReview
+          session={session}
+          readOnly={readOnly}
+          onOpenCitation={(sentence, citationId, referenceQuote) =>
+            actions.openCitation(entryId, session, sentence, citationId, referenceQuote, readOnly)
+          }
+          onSaveComment={(payload) => actions.saveComment(entryId, session.session_id, payload)}
+          onUpdateComment={(commentId, commentText) =>
+            actions.updateComment(entryId, session.session_id, commentId, commentText)
+          }
+          onDeleteComment={(commentId) => actions.deleteComment(entryId, session.session_id, commentId)}
+        />
+      </CardContent>
 
       {interactive ? (
         <ReviewPanel
           session={session}
           interactive={interactive}
-          onRefine={onRefine}
+          onRefine={() => actions.refine(session.session_id)}
         />
       ) : null}
-    </article>
+    </section>
   );
 }

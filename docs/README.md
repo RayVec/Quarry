@@ -132,6 +132,13 @@ Gemini note:
 - decomposition and metadata enrichment remain on the existing OpenAI-compatible hosted path (or local/heuristic fallbacks)
 - for Gemini keys, QUARRY accepts either `hosted.llm_api_key` or environment variable `GEMINI_API_KEY`
 
+Azure OpenAI note:
+
+- keep `provider = "openai_compatible"`
+- set `hosted.llm_base_url = "https://<resource>.openai.azure.com/openai/v1"`
+- set `hosted.llm_model` to your Azure deployment name
+- for new integrations, use the OpenAI v1-compatible route instead of `https://<resource>.services.ai.azure.com/models`
+
 ## Runtime Modes
 
 - `hybrid`

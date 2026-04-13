@@ -1,5 +1,5 @@
 from quarry.domain.models import SentenceStatus, SentenceType
-from quarry.pipeline.parsing import parse_generated_response, render_parsed_sentences
+from quarry.pipeline.parsing import has_multiple_natural_sentences, parse_generated_response, render_parsed_sentences
 
 
 def test_parse_generated_response_reclassifies_and_flags_structure() -> None:
@@ -39,3 +39,12 @@ def test_parse_generated_response_assigns_paragraph_indices_from_para_markers() 
 
     rendered = render_parsed_sentences(parsed)
     assert "[PARA]" in rendered
+
+
+def test_has_multiple_natural_sentences_detects_combined_claim_block() -> None:
+    assert has_multiple_natural_sentences(
+        "FEED maturity is defined in the report. It is also described in relation to the broader PDRI."
+    ) is True
+    assert has_multiple_natural_sentences(
+        "Using this output, executive leadership (e.g., project sponsor, executive steering committees) can better assess where and how to commit limited resources."
+    ) is False

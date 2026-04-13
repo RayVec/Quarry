@@ -1,12 +1,22 @@
 import { startTransition, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { Cog, Trash2 } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
 import { api } from "./api";
 import { CitationDialog } from "./components/CitationDialog";
 import { ConversationMessage, type AssistantMessageSource } from "./components/ConversationMessage";
 import { DiagnosticsDrawer } from "./components/DiagnosticsDrawer";
 import { PendingConversationMessage } from "./components/PendingConversationMessage";
 import { QueryComposer } from "./components/QueryComposer";
-import type { CitationIndexEntry, ParsedSentence, SessionState } from "./types";
+import { ThreadActionsProvider, type ThreadActions } from "./context/threadActions";
+import type {
+  CitationIndexEntry,
+  HostedProviderDescriptor,
+  HostedSettingsState,
+  HostedSettingsUpdatePayload,
+  ParsedSentence,
+  SessionState,
+} from "./types";
 import "./styles/app.css";
 
 type UserThreadEntry = {
@@ -52,6 +62,7 @@ interface PersistedRecentResearchPayload {
 
 const RECENT_RESEARCH_STORAGE_KEY = "quarry-recent-research-v1";
 const MAX_RECENT_RESEARCH_ITEMS = 8;
+const STORAGE_SOFT_LIMIT_BYTES = 4_500_000;
 
 interface ActiveCitationContext {
   entryId: string;
@@ -196,7 +207,28 @@ function persistThread(thread: ThreadEntry[]) {
     version: 1,
     thread,
   };
-  window.localStorage.setItem(THREAD_STORAGE_KEY, JSON.stringify(payload));
+  const serialized = JSON.stringify(payload);
+  if (serialized.length > STORAGE_SOFT_LIMIT_BYTES) {
+    const compactThread = normalizeThread(thread).slice(-80);
+    window.localStorage.setItem(
+      THREAD_STORAGE_KEY,
+      JSON.stringify({ version: 1, thread: compactThread } satisfies PersistedThreadPayload),
+    );
+    return;
+  }
+  try {
+    window.localStorage.setItem(THREAD_STORAGE_KEY, serialized);
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "QuotaExceededError") {
+      const compactThread = normalizeThread(thread).slice(-40);
+      window.localStorage.setItem(
+        THREAD_STORAGE_KEY,
+        JSON.stringify({ version: 1, thread: compactThread } satisfies PersistedThreadPayload),
+      );
+      return;
+    }
+    throw error;
+  }
 }
 
 function isRecentResearchItem(value: unknown): value is RecentResearchItem {
@@ -271,7 +303,21 @@ function persistRecentResearch(recentResearch: RecentResearchItem[]) {
     version: 1,
     recentResearch,
   };
-  window.localStorage.setItem(RECENT_RESEARCH_STORAGE_KEY, JSON.stringify(payload));
+  try {
+    window.localStorage.setItem(RECENT_RESEARCH_STORAGE_KEY, JSON.stringify(payload));
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "QuotaExceededError") {
+      window.localStorage.setItem(
+        RECENT_RESEARCH_STORAGE_KEY,
+        JSON.stringify({
+          version: 1,
+          recentResearch: recentResearch.slice(0, Math.max(1, Math.floor(MAX_RECENT_RESEARCH_ITEMS / 2))),
+        } satisfies PersistedRecentResearchPayload),
+      );
+      return;
+    }
+    throw error;
+  }
 }
 
 function updateRecentResearch(current: RecentResearchItem[], query: string): RecentResearchItem[] {
@@ -312,7 +358,14 @@ export default function App() {
   );
   const [loading, setLoading] = useState(false);
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
+  const [drawerTab, setDrawerTab] = useState<"settings" | "diagnostics">("settings");
   const [activeCitation, setActiveCitation] = useState<ActiveCitationContext | null>(null);
+  const [hostedSettings, setHostedSettings] = useState<HostedSettingsState | null>(null);
+  const [hostedProviders, setHostedProviders] = useState<HostedProviderDescriptor[]>([]);
+  const [hostedSettingsLoading, setHostedSettingsLoading] = useState(true);
+  const [hostedSettingsSaving, setHostedSettingsSaving] = useState(false);
+  const [hostedSettingsError, setHostedSettingsError] = useState<string | null>(null);
+  const [hostedSettingsSaveNotice, setHostedSettingsSaveNotice] = useState<string | null>(null);
   const resumedPersistedPendingRef = useRef(false);
   const workspaceColumnRef = useRef<HTMLElement | null>(null);
   const dockedComposerRef = useRef<HTMLFormElement | null>(null);
@@ -344,6 +397,39 @@ export default function App() {
   useEffect(() => {
     persistRecentResearch(recentResearch);
   }, [recentResearch]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadHostedSettings() {
+      setHostedSettingsLoading(true);
+      try {
+        const response = await api.getHostedSettings();
+        if (cancelled) {
+          return;
+        }
+        setHostedSettings(response.settings);
+        setHostedProviders(response.providers);
+        setHostedSettingsError(null);
+      } catch (error) {
+        if (cancelled) {
+          return;
+        }
+        setHostedSettingsError(
+          error instanceof Error ? error.message : "Could not load hosted settings.",
+        );
+      } finally {
+        if (!cancelled) {
+          setHostedSettingsLoading(false);
+        }
+      }
+    }
+
+    void loadHostedSettings();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (resumedPersistedPendingRef.current) {
@@ -513,6 +599,32 @@ export default function App() {
     setLoading(false);
   }
 
+  function openWorkspaceDrawer(tab: "settings" | "diagnostics") {
+    setDrawerTab(tab);
+    setHostedSettingsSaveNotice(null);
+    setDiagnosticsOpen(true);
+  }
+
+  async function handleSaveHostedSettings(payload: HostedSettingsUpdatePayload) {
+    setHostedSettingsSaving(true);
+    setHostedSettingsError(null);
+    setHostedSettingsSaveNotice(null);
+    try {
+      const response = await api.updateHostedSettings(payload);
+      startTransition(() => {
+        setHostedSettings(response.settings);
+        setHostedProviders(response.providers);
+      });
+      setHostedSettingsSaveNotice("Provider settings saved successfully.");
+    } catch (error) {
+      setHostedSettingsError(
+        error instanceof Error ? error.message : "Could not save hosted settings.",
+      );
+    } finally {
+      setHostedSettingsSaving(false);
+    }
+  }
+
   function handleDeleteRecentResearch(itemId: string) {
     startTransition(() => {
       setRecentResearch((current) => current.filter((item) => item.id !== itemId));
@@ -660,14 +772,31 @@ export default function App() {
     }
   }
 
-  async function handleRefine() {
-    if (!interactiveAssistant) return;
-    const response = await api.refine(interactiveAssistant.session.session_id);
-    startTransition(() => appendAssistantSession(response.session, "refinement"));
-  }
+  const threadActions: ThreadActions = {
+    openCitation: (entryId, session, sentence, citationId, referenceQuote, readOnly) => {
+      const citation = session.citation_index.find((item) => item.citation_id === citationId);
+      if (!citation) return;
+      setActiveCitation({
+        entryId,
+        session,
+        sentenceIndex: sentence.sentence_index,
+        referenceQuote,
+        citation,
+        readOnly,
+      });
+    },
+    saveComment: handleSaveSelectionComment,
+    updateComment: handleUpdateSelectionComment,
+    deleteComment: handleDeleteSelectionComment,
+    refine: async (sessionId: string) => {
+      const response = await api.refine(sessionId);
+      startTransition(() => appendAssistantSession(response.session, "refinement"));
+    },
+  };
 
   return (
-    <div className="app-shell">
+    <ThreadActionsProvider value={threadActions}>
+      <div className="app-shell">
       <aside className="app-sidebar">
         <div className="sidebar-brand">
           <span className="sidebar-mark">Q</span>
@@ -677,9 +806,9 @@ export default function App() {
           </div>
         </div>
 
-        <button className="sidebar-primary-action" onClick={handleNewSearch}>
+        <Button className="sidebar-primary-action h-11 justify-start text-sm" onClick={handleNewSearch}>
           + New Search
-        </button>
+        </Button>
 
         <div className="sidebar-section">
           <span className="tiny-label">Recent Research</span>
@@ -690,17 +819,21 @@ export default function App() {
                   className={`recent-research-item ${index === 0 && latestUserQuery === item.query ? "active" : ""}`}
                   key={item.id}
                 >
-                  <button className="recent-research-open" onClick={() => void submitQuery(item.query, { fresh: true })}>
+                  <Button
+                    className="recent-research-open h-auto whitespace-normal"
+                    onClick={() => void submitQuery(item.query, { fresh: true })}
+                    variant="ghost"
+                  >
                     <strong>{item.query}</strong>
                     <span>{formatRecentResearchDate(item.createdAt)}</span>
-                  </button>
-                  <button
+                  </Button>
+                  <Button
                     className="recent-research-delete"
                     aria-label={`Delete search ${item.query}`}
                     onClick={() => handleDeleteRecentResearch(item.id)}
                   >
                     <Trash2 aria-hidden="true" focusable="false" />
-                  </button>
+                  </Button>
                 </div>
               ))}
             </div>
@@ -715,6 +848,17 @@ export default function App() {
       <div className="workspace-shell">
         {thread.length === 0 ? (
           <main className="landing-stage">
+            <div className="landing-utility-row">
+              <Button
+                className="diagnostics-trigger"
+                data-testid="open-workspace-settings"
+                onClick={() => openWorkspaceDrawer("settings")}
+              >
+                <span className="sr-only">Provider settings</span>
+                <Cog aria-hidden="true" focusable="false" />
+              </Button>
+            </div>
+
             <section className="hero-block">
               <h1>Intelligence for the built environment.</h1>
               <p>
@@ -743,53 +887,34 @@ export default function App() {
                   <span className="tiny-label">Research Thread</span>
                   <h2>{latestUserQuery ?? "Current analysis"}</h2>
                 </div>
-                <button
-                  className="ghost-button diagnostics-trigger"
+                <Button
+                  className="diagnostics-trigger"
                   data-testid="open-diagnostics"
-                  onClick={() => setDiagnosticsOpen(true)}
+                  onClick={() => openWorkspaceDrawer("diagnostics")}
                 >
-                  <span className="sr-only">Diagnostics</span>
+                  <span className="sr-only">Provider settings and diagnostics</span>
                   <Cog aria-hidden="true" focusable="false" />
-                </button>
+                </Button>
               </div>
 
               <div className="thread-column" data-testid="conversation-thread">
                 {thread.map((entry) =>
                   entry.kind === "user" ? (
-                    <article className="thread-message user-message" key={entry.id}>
-                      <span className="tiny-label">Query</span>
-                      <p>{entry.query}</p>
-                    </article>
+                    <Card className="thread-message user-message border-border/70 bg-card/90" key={entry.id}>
+                      <CardContent className="flex flex-col gap-2">
+                        <span className="tiny-label">Query</span>
+                        <p>{entry.query}</p>
+                      </CardContent>
+                    </Card>
                   ) : entry.kind === "pending-assistant" ? (
                     <PendingConversationMessage key={entry.id} session={entry.session} />
                   ) : (
                     <ConversationMessage
                       key={entry.id}
+                      entryId={entry.id}
                       source={entry.source}
                       session={entry.session}
                       interactive={entry.interactive}
-                      onOpenCitation={(session, sentence, citationId, referenceQuote, readOnly) => {
-                        const citation = session.citation_index.find((item) => item.citation_id === citationId);
-                        if (!citation) return;
-                        setActiveCitation({
-                          entryId: entry.id,
-                          session,
-                          sentenceIndex: sentence.sentence_index,
-                          referenceQuote,
-                          citation,
-                          readOnly,
-                        });
-                      }}
-                      onSaveComment={(session, payload) =>
-                        handleSaveSelectionComment(entry.id, session.session_id, payload)
-                      }
-                      onUpdateComment={(session, commentId, commentText) =>
-                        handleUpdateSelectionComment(entry.id, session.session_id, commentId, commentText)
-                      }
-                      onDeleteComment={(session, commentId) =>
-                        handleDeleteSelectionComment(entry.id, session.session_id, commentId)
-                      }
-                      onRefine={handleRefine}
                     />
                   ),
                 )}
@@ -811,7 +936,20 @@ export default function App() {
         )}
       </div>
 
-      <DiagnosticsDrawer session={latestSession} open={diagnosticsOpen} onClose={() => setDiagnosticsOpen(false)} />
+      <DiagnosticsDrawer
+        session={latestSession}
+        open={diagnosticsOpen}
+        activeTab={drawerTab}
+        settings={hostedSettings}
+        providers={hostedProviders}
+        settingsLoading={hostedSettingsLoading}
+        settingsSaving={hostedSettingsSaving}
+        settingsError={hostedSettingsError}
+        settingsSaveNotice={hostedSettingsSaveNotice}
+        onTabChange={setDrawerTab}
+        onClose={() => setDiagnosticsOpen(false)}
+        onSaveSettings={(payload) => void handleSaveHostedSettings(payload)}
+      />
 
       {activeCitation ? (
         <CitationDialog
@@ -824,6 +962,7 @@ export default function App() {
           onSessionUpdate={(nextSession) => startTransition(() => replaceInteractiveSession(nextSession))}
         />
       ) : null}
-    </div>
+      </div>
+    </ThreadActionsProvider>
   );
 }

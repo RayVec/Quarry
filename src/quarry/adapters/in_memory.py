@@ -95,6 +95,9 @@ class InMemoryChunkStore(ChunkStore):
     def all_chunks(self) -> list[ChunkObject]:
         return list(self._chunks)
 
+    def chunk_count(self) -> int:
+        return len(self._chunks)
+
     def get_chunk(self, chunk_id: str) -> ChunkObject | None:
         return self._chunk_map.get(chunk_id)
 

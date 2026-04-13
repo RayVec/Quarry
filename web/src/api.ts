@@ -1,6 +1,17 @@
-import type { CitationIndexEntry, SessionEnvelope } from "./types";
+import type {
+    CitationIndexEntry,
+    HostedSettingsEnvelope,
+    HostedSettingsUpdatePayload,
+    SessionEnvelope,
+} from "./types";
 
 const API_ROOT = "http://127.0.0.1:8000/api/v1";
+
+type ApiErrorPayload = {
+  code?: string;
+  message?: string;
+  details?: Record<string, unknown> | null;
+};
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_ROOT}${path}`, {
@@ -11,7 +22,27 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     ...init,
   });
   if (!response.ok) {
-    throw new Error(await response.text());
+    const raw = await response.text();
+    let detail: string | null = null;
+    let code: string | null = null;
+    try {
+      const payload = JSON.parse(raw) as { detail?: string | ApiErrorPayload };
+      if (typeof payload.detail === "string" && payload.detail.trim()) {
+        detail = payload.detail;
+      } else if (payload.detail && typeof payload.detail === "object") {
+        detail =
+          typeof payload.detail.message === "string" && payload.detail.message.trim()
+            ? payload.detail.message
+            : null;
+        code =
+          typeof payload.detail.code === "string" && payload.detail.code.trim()
+            ? payload.detail.code
+            : null;
+      }
+    } catch {
+      detail = null;
+    }
+    throw new Error(code ? `${code}: ${detail ?? raw}` : detail ?? raw);
   }
   if (response.status === 204) {
     return undefined as T;
@@ -20,6 +51,15 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  getHostedSettings() {
+    return request<HostedSettingsEnvelope>("/settings/hosted");
+  },
+  updateHostedSettings(payload: HostedSettingsUpdatePayload) {
+    return request<HostedSettingsEnvelope>("/settings/hosted", {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    });
+  },
   startQuery(query: string) {
     return request<SessionEnvelope>("/query/start", {
       method: "POST",

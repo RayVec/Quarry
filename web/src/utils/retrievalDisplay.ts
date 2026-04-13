@@ -20,8 +20,45 @@ export interface UnifiedMatchQuality {
 interface MatchQualityContext {
   sentenceStatus?: SentenceStatus | null;
   referenceVerified?: boolean;
+  referenceQuoteCoverage?: number | null;
+  referenceQuoteExactMatch?: boolean;
   referenceConfidenceLabel?: Reference["confidence_label"];
   referenceConfidenceUnknown?: boolean;
+}
+
+export function normalizeForMatching(text: string | null | undefined) {
+  return (text ?? "").replace(/\s+/g, " ").trim();
+}
+
+export function referenceQuoteCoverage(
+  sentenceText: string | null | undefined,
+  referenceQuote: string | null | undefined,
+) {
+  const normalizedSentence = normalizeForMatching(sentenceText);
+  const normalizedQuote = normalizeForMatching(referenceQuote);
+
+  if (!normalizedSentence || !normalizedQuote) {
+    return 0;
+  }
+  if (normalizedSentence === normalizedQuote) {
+    return 1;
+  }
+  if (normalizedSentence.includes(normalizedQuote)) {
+    return normalizedQuote.length / normalizedSentence.length;
+  }
+  if (normalizedQuote.includes(normalizedSentence)) {
+    return 1;
+  }
+  return 0;
+}
+
+export function hasExactQuoteMatch(text: string | null | undefined, referenceQuote: string | null | undefined) {
+  const normalizedText = normalizeForMatching(text);
+  const normalizedQuote = normalizeForMatching(referenceQuote);
+  if (!normalizedText || !normalizedQuote) {
+    return false;
+  }
+  return normalizedText.includes(normalizedQuote);
 }
 
 /**
@@ -31,8 +68,9 @@ interface MatchQualityContext {
  * 1. Treat `retrieval_score` as a rough ranking signal, not calibrated confidence.
  * 2. Use broad score bands only.
  * 3. Use a clear lead to keep the top retrieval result out of `strong` when the runner-up is very close.
- * 4. Mix in verification: partial support caps the result at `fair`, unknown support caps it at `good`,
- *    and unsupported sentences/references fall to `weak`.
+ * 4. Mix in verification: explicit unsupported evidence falls to `weak`, while an exact quoted anchor
+ *    can keep a partially verified sentence out of the `fair` bucket when the passage still supports
+ *    most of the claim.
  *
  * Labels:
  * - strong: high retrieval score and direct verification support
@@ -89,6 +127,13 @@ export function describeUnifiedMatchQuality(
   const referenceUnknown =
     hasVerificationContext &&
     (context.referenceConfidenceUnknown || context.referenceConfidenceLabel == null);
+  const exactQuoteMatched =
+    context.referenceVerified === true && context.referenceQuoteExactMatch === true;
+  const dominantQuoteCoverage =
+    context.referenceQuoteCoverage != null &&
+    Number.isFinite(context.referenceQuoteCoverage) &&
+    context.referenceQuoteCoverage >= 0.45;
+  const quotedAnchorSupport = exactQuoteMatched && dominantQuoteCoverage;
 
   if (sentenceUnsupported || referenceUnsupported) {
     finalTier = 1;
@@ -99,19 +144,26 @@ export function describeUnifiedMatchQuality(
     if (context.referenceConfidenceLabel === "supported" || context.sentenceStatus === "verified") {
       finalTier = Math.max(finalTier, tightRace ? 2 : 3) as 1 | 2 | 3 | 4;
       detailReason = tightRace ? "unknown" : "supported";
+      if (quotedAnchorSupport && !tightRace) {
+        finalTier = Math.max(finalTier, 4) as 1 | 2 | 3 | 4;
+      }
     } else if (context.referenceConfidenceLabel === "partially_supported" || sentencePartiallyVerified) {
-      finalTier = Math.max(finalTier, 2) as 1 | 2 | 3 | 4;
-      detailReason = "partial";
+      finalTier = Math.max(finalTier, quotedAnchorSupport ? 3 : 2) as 1 | 2 | 3 | 4;
+      detailReason = quotedAnchorSupport ? "supported" : "partial";
     } else {
-      finalTier = Math.max(finalTier, 2) as 1 | 2 | 3 | 4;
-      detailReason = "unknown";
+      finalTier = Math.max(finalTier, quotedAnchorSupport ? 3 : 2) as 1 | 2 | 3 | 4;
+      detailReason = quotedAnchorSupport ? "supported" : "unknown";
     }
   } else if (sentencePartiallyVerified || referencePartial) {
-    finalTier = Math.min(finalTier, 2) as 1 | 2;
-    detailReason = "partial";
+    finalTier = quotedAnchorSupport
+      ? Math.max(finalTier, 3) as 1 | 2 | 3 | 4
+      : Math.min(finalTier, 2) as 1 | 2;
+    detailReason = quotedAnchorSupport ? "supported" : "partial";
   } else if (sentenceUnchecked || referenceUnknown) {
-    finalTier = Math.min(finalTier, 3) as 1 | 2 | 3;
-    detailReason = "unknown";
+    finalTier = quotedAnchorSupport
+      ? Math.max(finalTier, 3) as 1 | 2 | 3 | 4
+      : Math.min(finalTier, 3) as 1 | 2 | 3;
+    detailReason = quotedAnchorSupport ? "supported" : "unknown";
   }
 
   const levelByTier: Record<1 | 2 | 3 | 4, UnifiedMatchLevel> = {

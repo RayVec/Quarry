@@ -37,6 +37,10 @@ def default_config_path() -> Path:
     return Path("config.toml")
 
 
+def resolve_config_path(config_path: str | Path | None = None) -> Path:
+    return Path(config_path) if config_path else Path(os.getenv("QUARRY_CONFIG_PATH", default_config_path()))
+
+
 def validate_runtime_mode(value: str | None) -> str:
     normalized = (value or "").strip().lower()
     allowed = {"local", "hybrid", "hosted"}
@@ -56,13 +60,18 @@ def validate_llm_provider(value: str | None) -> str:
     )
 
 
-def load_file_config(config_path: str | Path | None = None) -> dict[str, object]:
-    resolved = Path(config_path) if config_path else Path(os.getenv("QUARRY_CONFIG_PATH", default_config_path()))
+def load_raw_file_config(config_path: str | Path | None = None) -> dict[str, object]:
+    resolved = resolve_config_path(config_path)
     if not resolved.exists():
         return {}
     payload = tomllib.loads(resolved.read_text())
     if not isinstance(payload, dict):
         return {}
+    return payload
+
+
+def load_file_config(config_path: str | Path | None = None) -> dict[str, object]:
+    payload = load_raw_file_config(config_path)
 
     flattened: dict[str, object] = {}
     section_mappings = {
@@ -161,6 +170,73 @@ def _config_bool(config: dict[str, object], key: str, default: bool) -> bool:
     return bool(value)
 
 
+def _toml_basic_string(value: str) -> str:
+    escaped = (
+        value.replace("\\", "\\\\")
+        .replace('"', '\\"')
+        .replace("\b", "\\b")
+        .replace("\t", "\\t")
+        .replace("\n", "\\n")
+        .replace("\f", "\\f")
+        .replace("\r", "\\r")
+    )
+    return f'"{escaped}"'
+
+
+def _toml_value(value: object) -> str:
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, float):
+        if value != value or value in {float("inf"), float("-inf")}:
+            raise ValueError("TOML does not support NaN or infinite float values.")
+        return repr(value)
+    if isinstance(value, str):
+        return _toml_basic_string(value)
+    if isinstance(value, Path):
+        return _toml_basic_string(str(value))
+    if isinstance(value, list):
+        return f"[{', '.join(_toml_value(item) for item in value)}]"
+    raise TypeError(f"Unsupported TOML value type: {type(value)!r}")
+
+
+def _render_toml_table(lines: list[str], table_path: list[str], payload: dict[str, object]) -> None:
+    scalar_items: list[tuple[str, object]] = []
+    nested_items: list[tuple[str, dict[str, object]]] = []
+    for key, value in payload.items():
+        if value is None:
+            continue
+        if isinstance(value, dict):
+            nested_items.append((key, value))
+        else:
+            scalar_items.append((key, value))
+
+    if table_path:
+        if lines:
+            lines.append("")
+        lines.append(f"[{'.'.join(table_path)}]")
+    for key, value in scalar_items:
+        lines.append(f"{key} = {_toml_value(value)}")
+    for key, value in nested_items:
+        _render_toml_table(lines, [*table_path, key], value)
+
+
+def render_toml(payload: dict[str, object]) -> str:
+    lines: list[str] = []
+    _render_toml_table(lines, [], payload)
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def write_raw_file_config(payload: dict[str, object], config_path: str | Path | None = None) -> Path:
+    resolved = resolve_config_path(config_path)
+    resolved.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = resolved.with_suffix(f"{resolved.suffix}.tmp")
+    temp_path.write_text(render_toml(payload))
+    temp_path.replace(resolved)
+    return resolved
+
+
 def load_local_model_status(artifacts_dir: Path) -> dict[str, object]:
     status_path = artifacts_dir / "local_model_status.json"
     if not status_path.exists():
@@ -202,7 +278,7 @@ class Settings:
     cors_origin: str = "http://127.0.0.1:5173"
     llm_base_url: str | None = None
     llm_api_key: str | None = None
-    llm_model: str = "gpt-4o-mini"
+    llm_model: str = "stepfun/step-3.5-flash:free"
     llm_provider: str = "openai_compatible"
     runtime_mode: str = "hybrid"
     runtime_profile: str = default_runtime_profile()
@@ -254,6 +330,11 @@ class Settings:
         configured_llm_api_key = os.getenv("QUARRY_LLM_API_KEY", str(_config_value(file_config, "llm_api_key", ""))).strip()
         gemini_env_api_key = os.getenv("QUARRY_GEMINI_API_KEY", os.getenv("GEMINI_API_KEY", "")).strip()
         resolved_llm_api_key = configured_llm_api_key or (gemini_env_api_key if llm_provider == "gemini" else "")
+        default_llm_model = (
+            "gemini-3-flash-preview"
+            if llm_provider == "gemini"
+            else "stepfun/step-3.5-flash:free"
+        )
         return cls(
             app_name=os.getenv("QUARRY_APP_NAME", str(_config_value(file_config, "app_name", "QUARRY"))),
             corpus_dir=Path(os.getenv("QUARRY_CORPUS_DIR", str(_config_value(file_config, "corpus_dir", "data/corpus")))),
@@ -284,7 +365,7 @@ class Settings:
             cors_origin=os.getenv("QUARRY_CORS_ORIGIN", str(_config_value(file_config, "cors_origin", "http://127.0.0.1:5173"))),
             llm_base_url=os.getenv("QUARRY_LLM_BASE_URL", str(_config_value(file_config, "llm_base_url", ""))) or None,
             llm_api_key=resolved_llm_api_key or None,
-            llm_model=os.getenv("QUARRY_LLM_MODEL", str(_config_value(file_config, "llm_model", "gpt-4o-mini"))),
+            llm_model=os.getenv("QUARRY_LLM_MODEL", str(_config_value(file_config, "llm_model", default_llm_model))),
             llm_provider=llm_provider,
             runtime_mode=validate_runtime_mode(os.getenv("QUARRY_RUNTIME_MODE", str(_config_value(file_config, "runtime_mode", "hybrid")))),
             runtime_profile=os.getenv("QUARRY_RUNTIME_PROFILE", str(_config_value(file_config, "runtime_profile", default_runtime_profile()))),

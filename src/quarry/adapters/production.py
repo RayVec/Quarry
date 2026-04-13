@@ -41,6 +41,7 @@ from quarry.adapters.mlx_runtime import (
 )
 from quarry.config import Settings, is_local_component_ready
 from quarry.domain.models import ChunkObject, ConfidenceLabel, GenerationRequest, RetrievalFilters, RetrievedPassage, RuntimeMode, RuntimeProfile, ScoredReference
+from quarry.hosted_auth import build_openai_compatible_headers
 from quarry.logging_utils import elapsed_ms, logger_with_trace, timed
 from quarry.model_cache import configure_model_cache
 from quarry.prompts import (
@@ -55,6 +56,23 @@ from quarry.retries import with_retries
 
 
 logger = logger_with_trace(__name__)
+
+
+def _http_error_log_fields(exc: Exception) -> dict[str, object]:
+    fields: dict[str, object] = {}
+    if isinstance(exc, httpx.HTTPStatusError):
+        fields["http_status_code"] = exc.response.status_code
+        fields["request_url"] = str(exc.request.url)
+        body_text = ""
+        try:
+            body_text = json.dumps(exc.response.json(), ensure_ascii=True)
+        except Exception:
+            body_text = exc.response.text.strip()
+        if body_text:
+            fields["error_body"] = body_text[:4000]
+    elif isinstance(exc, httpx.RequestError) and exc.request is not None:
+        fields["request_url"] = str(exc.request.url)
+    return fields
 
 
 @dataclass(slots=True)
@@ -78,6 +96,19 @@ class OpenAICompatibleLLM:
         self.api_key = api_key
         self.model = model
 
+    def _request_payload(self, prompt: str, temperature: float) -> dict[str, object]:
+        payload: dict[str, object] = {
+            "model": self.model,
+            "messages": [
+                {"role": "system", "content": SHARED_SYSTEM_PROMPT},
+                {"role": "user", "content": prompt},
+            ],
+        }
+        # Azure GPT-5 deployments reject non-default temperature values.
+        if not self.model.lower().startswith("gpt-5"):
+            payload["temperature"] = temperature
+        return payload
+
     async def complete(self, prompt: str, *, temperature: float = 0.1, operation: str = "completion") -> str:
         logger.info(
             "hosted llm request started",
@@ -91,24 +122,18 @@ class OpenAICompatibleLLM:
             },
         )
         start = timed()
+        payload = self._request_payload(prompt, temperature)
 
         async def request_operation() -> str:
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.post(
                     f"{self.base_url}/chat/completions",
-                    headers={"Authorization": f"Bearer {self.api_key}"},
-                    json={
-                        "model": self.model,
-                        "temperature": temperature,
-                        "messages": [
-                            {"role": "system", "content": SHARED_SYSTEM_PROMPT},
-                            {"role": "user", "content": prompt},
-                        ],
-                    },
+                    headers=build_openai_compatible_headers(self.base_url, self.api_key),
+                    json=payload,
                 )
                 response.raise_for_status()
-                payload = response.json()
-                return payload["choices"][0]["message"]["content"]
+                response_payload = response.json()
+                return response_payload["choices"][0]["message"]["content"]
 
         try:
             raw = await with_retries(request_operation)
@@ -123,6 +148,7 @@ class OpenAICompatibleLLM:
                     "error_type": exc.__class__.__name__,
                     "latency_ms": elapsed_ms(start),
                     "console_visible": True,
+                    **_http_error_log_fields(exc),
                 },
             )
             raise
@@ -337,7 +363,7 @@ class HostedEmbeddingClient(EmbeddingClient):
             async with httpx.AsyncClient(timeout=60.0) as client:
                 response = await client.post(
                     f"{self.base_url}/embeddings",
-                    headers={"Authorization": f"Bearer {self.api_key}"},
+                    headers=build_openai_compatible_headers(self.base_url, self.api_key),
                     json={"model": self.model, "input": list(texts)},
                 )
                 response.raise_for_status()
@@ -346,8 +372,18 @@ class HostedEmbeddingClient(EmbeddingClient):
 
         try:
             return await with_retries(operation)
-        except Exception:
-            logger.warning("embedding client fell back to hash embeddings")
+        except Exception as exc:
+            logger.warning(
+                "embedding client fell back to hash embeddings",
+                extra={
+                    "provider": self.base_url,
+                    "model": self.model,
+                    "error": str(exc),
+                    "error_type": exc.__class__.__name__,
+                    "console_visible": True,
+                    **_http_error_log_fields(exc),
+                },
+            )
             return await self.fallback.embed_texts(texts)
 
 

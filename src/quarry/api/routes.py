@@ -1,21 +1,28 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 
 from quarry.domain.models import (
+    ApiError,
     CitationFeedbackRequest,
     CitationReplaceRequest,
     CitationReplacementRequest,
+    HostedSettingsEnvelope,
+    HostedSettingsUpdateRequest,
     QueryRequest,
     ReviewCommentRequest,
     ReviewCommentUpdateRequest,
+    ScopedRetrievalRequest,
     ScopedRetrievalEnvelope,
     SessionEnvelope,
 )
+from quarry.hosted_settings import build_hosted_settings_envelope, persist_hosted_settings
 from quarry.services.pipeline_service import PipelineService
 from quarry.services.session_store import SessionNotFoundError
+from quarry.config import Settings
 
 
 router = APIRouter(prefix="/api/v1", tags=["quarry"])
@@ -23,6 +30,53 @@ router = APIRouter(prefix="/api/v1", tags=["quarry"])
 
 def get_service(request: Request) -> PipelineService:
     return request.app.state.pipeline_service
+
+
+def _config_path_from_request(request: Request) -> str | Path | None:
+    return getattr(request.app.state, "config_path", None)
+
+
+def api_error(
+    *,
+    status_code: int,
+    code: str,
+    message: str,
+    details: dict[str, str | int | float | bool | None] | None = None,
+) -> HTTPException:
+    return HTTPException(
+        status_code=status_code,
+        detail=ApiError(code=code, message=message, details=details).model_dump(),
+    )
+
+
+@router.get("/settings/hosted", response_model=HostedSettingsEnvelope)
+async def get_hosted_settings(request: Request) -> HostedSettingsEnvelope:
+    return build_hosted_settings_envelope(_config_path_from_request(request))
+
+
+@router.put("/settings/hosted", response_model=HostedSettingsEnvelope)
+async def update_hosted_settings(
+    payload: HostedSettingsUpdateRequest,
+    request: Request,
+) -> HostedSettingsEnvelope:
+    config_path = _config_path_from_request(request)
+    try:
+        envelope = persist_hosted_settings(payload, config_path=config_path)
+        next_settings = Settings.from_env(config_path=config_path)
+        request.app.state.reconfigure_runtime(next_settings)
+        return envelope
+    except RuntimeError as exc:
+        raise api_error(
+            status_code=409,
+            code="SETTINGS_CONFLICT",
+            message=str(exc),
+        ) from exc
+    except ValueError as exc:
+        raise api_error(
+            status_code=422,
+            code="SETTINGS_VALIDATION_ERROR",
+            message=str(exc),
+        ) from exc
 
 
 @router.post("/query", response_model=SessionEnvelope)
@@ -46,8 +100,11 @@ async def start_query(
         query_tasks.discard(done_task)
         try:
             done_task.result()
-        except Exception:
-            pass
+        except Exception as exc:
+            request.app.state.background_error_logger.exception(
+                "query task failed",
+                extra={"error": str(exc), "task": "run_query_for_session", "console_visible": True},
+            )
 
     task.add_done_callback(_cleanup_query_task)
     return SessionEnvelope(session=session)
@@ -58,7 +115,7 @@ async def get_session(session_id: str, service: PipelineService = Depends(get_se
     try:
         session = service.get_session(session_id)
     except SessionNotFoundError as exc:
-        raise HTTPException(status_code=404, detail="Session not found.") from exc
+        raise api_error(status_code=404, code="SESSION_NOT_FOUND", message="Session not found.") from exc
     return SessionEnvelope(session=session)
 
 
@@ -67,7 +124,7 @@ async def get_review_state(session_id: str, service: PipelineService = Depends(g
     try:
         session = service.review_snapshot(session_id)
     except SessionNotFoundError as exc:
-        raise HTTPException(status_code=404, detail="Session not found.") from exc
+        raise api_error(status_code=404, code="SESSION_NOT_FOUND", message="Session not found.") from exc
     return SessionEnvelope(session=session)
 
 
@@ -76,7 +133,7 @@ async def close_session(session_id: str, service: PipelineService = Depends(get_
     try:
         service.close_session(session_id)
     except SessionNotFoundError as exc:
-        raise HTTPException(status_code=404, detail="Session not found.") from exc
+        raise api_error(status_code=404, code="SESSION_NOT_FOUND", message="Session not found.") from exc
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -89,7 +146,7 @@ async def add_review_comment(
     try:
         session = service.add_review_comment(session_id, payload)
     except SessionNotFoundError as exc:
-        raise HTTPException(status_code=404, detail="Session not found.") from exc
+        raise api_error(status_code=404, code="SESSION_NOT_FOUND", message="Session not found.") from exc
     return SessionEnvelope(session=session)
 
 
@@ -103,7 +160,7 @@ async def update_review_comment(
     try:
         session = service.update_review_comment(session_id, comment_id, payload.comment_text)
     except SessionNotFoundError as exc:
-        raise HTTPException(status_code=404, detail="Session not found.") from exc
+        raise api_error(status_code=404, code="SESSION_NOT_FOUND", message="Session not found.") from exc
     return SessionEnvelope(session=session)
 
 
@@ -116,7 +173,7 @@ async def delete_review_comment(
     try:
         session = service.delete_review_comment(session_id, comment_id)
     except SessionNotFoundError as exc:
-        raise HTTPException(status_code=404, detail="Session not found.") from exc
+        raise api_error(status_code=404, code="SESSION_NOT_FOUND", message="Session not found.") from exc
     return SessionEnvelope(session=session)
 
 
@@ -124,14 +181,13 @@ async def delete_review_comment(
 async def scoped_retrieval(
     session_id: str,
     citation_id: int,
-    payload: dict,
+    payload: ScopedRetrievalRequest,
     service: PipelineService = Depends(get_service),
 ) -> ScopedRetrievalEnvelope:
     try:
-        sentence_index = int(payload.get("sentence_index", -1))
-        return await service.scoped_retrieval(session_id, sentence_index, citation_id)
+        return await service.scoped_retrieval(session_id, payload.sentence_index, citation_id)
     except SessionNotFoundError as exc:
-        raise HTTPException(status_code=404, detail="Session not found.") from exc
+        raise api_error(status_code=404, code="SESSION_NOT_FOUND", message="Session not found.") from exc
 
 
 @router.post("/sessions/{session_id}/citations/{citation_id}/replace", response_model=SessionEnvelope)
@@ -144,7 +200,7 @@ async def replace_citation(
     try:
         session = service.replace_citation(session_id, payload.sentence_index, citation_id, payload)
     except SessionNotFoundError as exc:
-        raise HTTPException(status_code=404, detail="Session not found.") from exc
+        raise api_error(status_code=404, code="SESSION_NOT_FOUND", message="Session not found.") from exc
     return SessionEnvelope(session=session)
 
 
@@ -163,7 +219,7 @@ async def set_citation_feedback(
             payload.feedback_type,
         )
     except SessionNotFoundError as exc:
-        raise HTTPException(status_code=404, detail="Session not found.") from exc
+        raise api_error(status_code=404, code="SESSION_NOT_FOUND", message="Session not found.") from exc
     return SessionEnvelope(session=session)
 
 
@@ -176,7 +232,7 @@ async def get_citation_alternatives(
     try:
         return await service.get_citation_alternatives(session_id, citation_id)
     except SessionNotFoundError as exc:
-        raise HTTPException(status_code=404, detail="Session not found.") from exc
+        raise api_error(status_code=404, code="SESSION_NOT_FOUND", message="Session not found.") from exc
 
 
 @router.put("/sessions/{session_id}/citations/{citation_id}/replace", response_model=SessionEnvelope)
@@ -194,7 +250,7 @@ async def replace_with_alternative(
             payload.replacement_citation_id,
         )
     except SessionNotFoundError as exc:
-        raise HTTPException(status_code=404, detail="Session not found.") from exc
+        raise api_error(status_code=404, code="SESSION_NOT_FOUND", message="Session not found.") from exc
     return SessionEnvelope(session=session)
 
 
@@ -207,7 +263,7 @@ async def undo_citation_replacement(
     try:
         session = service.undo_replacement(session_id, citation_id)
     except SessionNotFoundError as exc:
-        raise HTTPException(status_code=404, detail="Session not found.") from exc
+        raise api_error(status_code=404, code="SESSION_NOT_FOUND", message="Session not found.") from exc
     return SessionEnvelope(session=session)
 
 
@@ -216,5 +272,5 @@ async def refine_response(session_id: str, service: PipelineService = Depends(ge
     try:
         session = await service.refine(session_id)
     except SessionNotFoundError as exc:
-        raise HTTPException(status_code=404, detail="Session not found.") from exc
+        raise api_error(status_code=404, code="SESSION_NOT_FOUND", message="Session not found.") from exc
     return SessionEnvelope(session=session)

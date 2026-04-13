@@ -38,10 +38,12 @@ llm_api_key = "YOUR_API_KEY_HERE"
 
 # The API endpoint — required for provider="openai_compatible"
 # (ignored when provider="gemini")
+# Azure OpenAI v1 example: "https://YOUR-RESOURCE-NAME.openai.azure.com/openai/v1"
 llm_base_url = "https://openrouter.ai/api/v1"
 
 # Which model to use for answer generation
 #   openai_compatible example: "openai/gpt-4o-mini"
+#   Azure OpenAI example: "YOUR-DEPLOYMENT-NAME" (deployment name, not raw model ID)
 #   gemini example: "gemini-3-flash-preview"
 llm_model = "openai/gpt-4o-mini"
 

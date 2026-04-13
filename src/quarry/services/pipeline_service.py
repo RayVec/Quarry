@@ -2,13 +2,9 @@ from __future__ import annotations
 
 from collections import Counter
 from uuid import uuid4
-
 from quarry.adapters.interfaces import ChunkStore
 from quarry.domain.models import (
-    CitationFeedback,
     CitationFeedbackType,
-    CitationIndexEntry,
-    CitationReplacement,
     CitationReplacementRequest,
     ConfidenceLabel,
     FeedbackState,
@@ -25,7 +21,6 @@ from quarry.domain.models import (
     SelectionCommentEdit,
     SentenceCitationPair,
     QueryType,
-    ReviewComment,
     ReviewCommentRequest,
     SessionState,
     SentenceStatus,
@@ -35,9 +30,10 @@ from quarry.domain.models import (
 )
 from quarry.pipeline.decomposition import QueryDecomposer
 from quarry.pipeline.generation import AnswerGenerator, SentenceRegenerator
-from quarry.pipeline.parsing import parse_generated_response, render_parsed_sentences
+from quarry.pipeline.parsing import has_multiple_natural_sentences, parse_generated_response, render_parsed_sentences
 from quarry.pipeline.retrieval import HybridRetriever, build_citation_index
 from quarry.pipeline.verification import VerificationService
+from quarry.services.review_service import ReviewService
 from quarry.services.session_store import SessionStore
 from quarry.services.session_store import SessionNotFoundError
 from quarry.logging_utils import elapsed_ms, logger_with_trace, timed
@@ -52,6 +48,7 @@ class PipelineService:
     REGENERATION_MIN_QUOTE_WORDS = 8
     REFINE_PROMPT_WINDOW_RATIO = 0.8
     FOLLOWUP_SCORE_FLOOR_RATIO = 0.5
+    STRONG_ANCHOR_COVERAGE_THRESHOLD = 0.45
 
     def __init__(
         self,
@@ -89,6 +86,13 @@ class PipelineService:
         self.runtime_profile = runtime_profile
         self.local_model_status = local_model_status or {}
         self.active_model_ids = active_model_ids or []
+        self.review_service = ReviewService(
+            session_store=session_store,
+            chunk_store=chunk_store,
+            hybrid_retriever=hybrid_retriever,
+            scoped_top_k=scoped_top_k,
+            ambiguity_gap_threshold=ambiguity_gap_threshold,
+        )
 
     def begin_query(self, request: QueryRequest) -> SessionState:
         session = self._create_base_session(str(uuid4()), request.query)
@@ -381,40 +385,22 @@ class PipelineService:
         return self.session_store.save(base_session)
 
     def get_session(self, session_id: str) -> SessionState:
-        return self.session_store.get(session_id)
+        return self.review_service.get_session(session_id)
 
     def review_snapshot(self, session_id: str) -> SessionState:
-        return self.session_store.get(session_id)
+        return self.review_service.review_snapshot(session_id)
 
     def close_session(self, session_id: str) -> None:
-        self.session_store.delete(session_id)
+        self.review_service.close_session(session_id)
 
     def add_review_comment(self, session_id: str, request: ReviewCommentRequest) -> SessionState:
-        session = self.session_store.get(session_id)
-        session.feedback.comments.append(
-            ReviewComment(
-                comment_id=str(uuid4()),
-                text_selection=request.text_selection.strip(),
-                char_start=request.char_start,
-                char_end=request.char_end,
-                comment_text=request.comment_text.strip(),
-            )
-        )
-        return self.session_store.save(session)
+        return self.review_service.add_review_comment(session_id, request)
 
     def update_review_comment(self, session_id: str, comment_id: str, comment_text: str) -> SessionState:
-        session = self.session_store.get(session_id)
-        for comment in session.feedback.comments:
-            if comment.comment_id == comment_id:
-                comment.comment_text = comment_text.strip()
-                break
-        return self.session_store.save(session)
+        return self.review_service.update_review_comment(session_id, comment_id, comment_text)
 
     def delete_review_comment(self, session_id: str, comment_id: str) -> SessionState:
-        session = self.session_store.get(session_id)
-        session.feedback.comments = [comment for comment in session.feedback.comments if comment.comment_id != comment_id]
-        session.feedback.resolved_comments = [comment for comment in session.feedback.resolved_comments if comment.comment_id != comment_id]
-        return self.session_store.save(session)
+        return self.review_service.delete_review_comment(session_id, comment_id)
 
     def set_citation_feedback(
         self,
@@ -423,90 +409,10 @@ class PipelineService:
         citation_id: int,
         feedback_type: CitationFeedbackType,
     ) -> SessionState:
-        session = self.session_store.get(session_id)
-        existing_feedback = next(
-            (
-                fb
-                for fb in session.feedback.citation_feedback
-                if fb.sentence_index == sentence_index and fb.citation_id == citation_id
-            ),
-            None
-        )
-        if existing_feedback:
-            if feedback_type == CitationFeedbackType.NEUTRAL:
-                session.feedback.citation_feedback = [
-                    fb
-                    for fb in session.feedback.citation_feedback
-                    if not (fb.sentence_index == sentence_index and fb.citation_id == citation_id)
-                ]
-            else:
-                existing_feedback.feedback_type = feedback_type
-        elif feedback_type != CitationFeedbackType.NEUTRAL:
-            session.feedback.citation_feedback.append(
-                CitationFeedback(
-                    sentence_index=sentence_index,
-                    citation_id=citation_id,
-                    feedback_type=feedback_type,
-                )
-            )
-        return self.session_store.save(session)
+        return self.review_service.set_citation_feedback(session_id, sentence_index, citation_id, feedback_type)
 
     async def get_citation_alternatives(self, session_id: str, citation_id: int) -> ScopedRetrievalEnvelope:
-        session = self.session_store.get(session_id)
-        target_citation = next((entry for entry in session.citation_index if entry.citation_id == citation_id), None)
-        if target_citation is None:
-            return ScopedRetrievalEnvelope(citations=[])
-        
-        sentence = None
-        for parsed_sentence in session.parsed_sentences:
-            sentence_citation_ids = [ref.citation_id for ref in parsed_sentence.references if ref.citation_id is not None]
-            if citation_id in sentence_citation_ids:
-                sentence = parsed_sentence
-                break
-        
-        facets = [sentence.sentence_text] if sentence and sentence.sentence_text.strip() else session.facets
-        passages, _diagnostics = await self.hybrid_retriever.retrieve(
-            original_query=session.original_query,
-            facets=facets or session.facets,
-            query_type=session.query_type,
-        )
-        
-        alternative_citations = build_citation_index(
-            passages,
-            starting_id=max((entry.citation_id for entry in session.citation_index), default=0) + 1,
-            ambiguity_gap_threshold=self.ambiguity_gap_threshold,
-        )
-        
-        existing_chunk_ids = {entry.chunk_id for entry in session.citation_index}
-        filtered = [entry for entry in alternative_citations if entry.chunk_id not in existing_chunk_ids][: self.scoped_top_k]
-        
-        if filtered:
-            return ScopedRetrievalEnvelope(citations=filtered)
-        
-        fallback_candidates = [
-            chunk
-            for chunk in self.chunk_store.all_chunks()
-            if chunk.chunk_id not in existing_chunk_ids and chunk.chunk_id != target_citation.chunk_id
-        ][: self.scoped_top_k]
-        
-        fallback = [
-            CitationIndexEntry(
-                citation_id=max((entry.citation_id for entry in session.citation_index), default=0) + index + 1,
-                chunk_id=chunk.chunk_id,
-                text=chunk.text,
-                document_id=chunk.document_id,
-                document_title=chunk.document_title,
-                section_heading=chunk.section_heading,
-                section_path=chunk.section_path,
-                page_number=chunk.page_start,
-                page_end=chunk.page_end,
-                retrieval_score=0.0,
-                source_facet="alternative_fallback",
-                source_facets=["alternative_fallback"],
-            )
-            for index, chunk in enumerate(fallback_candidates)
-        ]
-        return ScopedRetrievalEnvelope(citations=fallback)
+        return await self.review_service.get_citation_alternatives(session_id, citation_id)
 
     def replace_with_alternative(
         self,
@@ -515,79 +421,10 @@ class PipelineService:
         citation_id: int,
         replacement_citation_id: int,
     ) -> SessionState:
-        session = self.session_store.get(session_id)
-        target = next((entry for entry in session.citation_index if entry.citation_id == citation_id), None)
-        replacement = next((entry for entry in session.citation_index if entry.citation_id == replacement_citation_id), None)
-        
-        if target is None or replacement is None:
-            return self.session_store.save(session)
-        
-        target.chunk_id = replacement.chunk_id
-        target.text = replacement.text
-        target.document_id = replacement.document_id
-        target.document_title = replacement.document_title
-        target.section_heading = replacement.section_heading
-        target.section_path = replacement.section_path
-        target.page_number = replacement.page_number
-        target.page_end = replacement.page_end
-        target.replacement_pending = True
-        target.reviewer_note = "Replaced via citation feedback."
-        
-        session.feedback.citation_feedback = [
-            fb
-            for fb in session.feedback.citation_feedback
-            if not (fb.sentence_index == sentence_index and fb.citation_id == citation_id)
-        ]
-        
-        return self.session_store.save(session)
+        return self.review_service.replace_with_alternative(session_id, sentence_index, citation_id, replacement_citation_id)
 
     async def scoped_retrieval(self, session_id: str, sentence_index: int, citation_id: int) -> ScopedRetrievalEnvelope:
-        session = self.session_store.get(session_id)
-        if sentence_index < 0 or sentence_index >= len(session.parsed_sentences):
-            return ScopedRetrievalEnvelope(citations=[])
-        sentence = session.parsed_sentences[sentence_index]
-        seed = next((entry for entry in session.citation_index if entry.citation_id == citation_id), None)
-        if seed is None:
-            return ScopedRetrievalEnvelope(citations=[])
-        facets = [sentence.sentence_text] if sentence.sentence_text.strip() else session.facets
-        passages, _diagnostics = await self.hybrid_retriever.retrieve(
-            original_query=session.original_query,
-            facets=facets or session.facets,
-            query_type=session.query_type,
-        )
-        scoped = build_citation_index(
-            passages,
-            starting_id=max((entry.citation_id for entry in session.citation_index), default=0) + 1,
-            ambiguity_gap_threshold=self.ambiguity_gap_threshold,
-        )
-        existing_chunk_ids = {entry.chunk_id for entry in session.citation_index}
-        filtered = [entry for entry in scoped if entry.chunk_id not in existing_chunk_ids][: self.scoped_top_k]
-        if filtered:
-            return ScopedRetrievalEnvelope(citations=filtered)
-
-        fallback_candidates = [
-            chunk
-            for chunk in self.chunk_store.all_chunks()
-            if chunk.chunk_id not in existing_chunk_ids and chunk.chunk_id != seed.chunk_id
-        ][: self.scoped_top_k]
-        fallback = [
-            CitationIndexEntry(
-                citation_id=max((entry.citation_id for entry in session.citation_index), default=0) + index + 1,
-                chunk_id=chunk.chunk_id,
-                text=chunk.text,
-                document_id=chunk.document_id,
-                document_title=chunk.document_title,
-                section_heading=chunk.section_heading,
-                section_path=chunk.section_path,
-                page_number=chunk.page_start,
-                page_end=chunk.page_end,
-                retrieval_score=0.0,
-                source_facet="scoped_fallback",
-                source_facets=["scoped_fallback"],
-            )
-            for index, chunk in enumerate(fallback_candidates)
-        ]
-        return ScopedRetrievalEnvelope(citations=fallback)
+        return await self.review_service.scoped_retrieval(session_id, sentence_index, citation_id)
 
     def replace_citation(
         self,
@@ -596,58 +433,10 @@ class PipelineService:
         citation_id: int,
         request: CitationReplacementRequest,
     ) -> SessionState:
-        session = self.session_store.get(session_id)
-        replacement = next((entry for entry in self.chunk_store.all_chunks() if entry.chunk_id == request.replacement_chunk_id), None)
-        if replacement is None:
-            return self.session_store.save(session)
-        target = next((entry for entry in session.citation_index if entry.citation_id == citation_id), None)
-        if target is not None:
-            target.chunk_id = replacement.chunk_id
-            target.text = replacement.text
-            target.document_id = replacement.document_id
-            target.document_title = replacement.document_title
-            target.section_heading = replacement.section_heading
-            target.section_path = replacement.section_path
-            target.page_number = replacement.page_start
-            target.page_end = replacement.page_end
-            target.replacement_pending = True
-            target.reviewer_note = "Reviewer selected replacement passage."
-
-        if 0 <= sentence_index < len(session.parsed_sentences):
-            sentence = session.parsed_sentences[sentence_index]
-            for reference in sentence.references:
-                if reference.citation_id == citation_id:
-                    reference.matched_chunk_id = replacement.chunk_id
-                    reference.document_id = replacement.document_id
-                    reference.document_title = replacement.document_title
-                    reference.section_heading = replacement.section_heading
-                    reference.section_path = replacement.section_path
-                    reference.page_number = replacement.page_start
-                    reference.replacement_pending = True
-            sentence.match_quality = MatchQuality.PARTIAL
-
-        if not any(
-            replacement.citation_id == citation_id for replacement in session.feedback.citation_replacements
-        ):
-            session.feedback.citation_replacements.append(
-                CitationReplacement(citation_id=citation_id, replacement_chunk_id=request.replacement_chunk_id)
-            )
-        return self.session_store.save(session)
+        return self.review_service.replace_citation(session_id, sentence_index, citation_id, request)
 
     def undo_replacement(self, session_id: str, citation_id: int) -> SessionState:
-        session = self.session_store.get(session_id)
-        for entry in session.citation_index:
-            if entry.citation_id == citation_id:
-                entry.replacement_pending = False
-                entry.reviewer_note = None
-        for sentence in session.parsed_sentences:
-            for reference in sentence.references:
-                if reference.citation_id == citation_id:
-                    reference.replacement_pending = False
-        session.feedback.citation_replacements = [
-            replacement for replacement in session.feedback.citation_replacements if replacement.citation_id != citation_id
-        ]
-        return self.session_store.save(session)
+        return self.review_service.undo_replacement(session_id, citation_id)
 
     async def refine(self, session_id: str) -> SessionState:
         refine_start = timed()
@@ -1314,6 +1103,8 @@ class PipelineService:
         parsed = parse_generated_response(raw_response)
         if not parsed:
             return False
+        if any(has_multiple_natural_sentences(sentence.sentence_text) for sentence in parsed):
+            return False
         if all(sentence.sentence_type == SentenceType.STRUCTURE for sentence in parsed):
             return False
         if all(not sentence.raw_text for sentence in parsed):
@@ -1408,12 +1199,59 @@ class PipelineService:
                 for reference in verified_refs
             )
             has_partial_label = any(reference.confidence_label == ConfidenceLabel.PARTIALLY_SUPPORTED for reference in verified_refs)
+            has_unsupported_label = any(reference.confidence_label == ConfidenceLabel.NOT_SUPPORTED for reference in verified_refs)
             has_unknown_confidence = any(reference.confidence_label is None or reference.confidence_unknown for reference in verified_refs)
+            has_dominant_anchor = any(
+                self._reference_has_dominant_anchor(sentence.sentence_text, reference)
+                for reference in verified_refs
+            )
+            all_refs_verified = len(verified_refs) == len(sentence.references)
 
             if sentence.status == SentenceStatus.VERIFIED and not has_short_anchor and not has_partial_label and not has_unknown_confidence:
                 sentence.match_quality = MatchQuality.STRONG
+            elif (
+                sentence.status == SentenceStatus.PARTIALLY_VERIFIED
+                and sentence.sentence_type == SentenceType.CLAIM
+                and len(sentence.references) == 1
+                and all_refs_verified
+                and has_dominant_anchor
+                and not has_short_anchor
+                and not has_unknown_confidence
+                and not has_unsupported_label
+            ):
+                sentence.match_quality = MatchQuality.STRONG
             else:
                 sentence.match_quality = MatchQuality.PARTIAL
+
+    def _reference_has_dominant_anchor(self, sentence_text: str, reference) -> bool:
+        if not reference.verified or not reference.reference_quote or not reference.matched_chunk_id:
+            return False
+
+        chunk = self.chunk_store.get_chunk(reference.matched_chunk_id)
+        if chunk is None:
+            return False
+
+        normalized_sentence = self._normalize_match_text(sentence_text)
+        normalized_quote = self._normalize_match_text(reference.reference_quote)
+        normalized_chunk = self._normalize_match_text(chunk.text)
+        if not normalized_sentence or not normalized_quote or normalized_quote not in normalized_chunk:
+            return False
+
+        return self._quote_sentence_coverage(normalized_sentence, normalized_quote) >= self.STRONG_ANCHOR_COVERAGE_THRESHOLD
+
+    def _normalize_match_text(self, text: str | None) -> str:
+        return " ".join((text or "").split()).strip()
+
+    def _quote_sentence_coverage(self, normalized_sentence: str, normalized_quote: str) -> float:
+        if not normalized_sentence or not normalized_quote:
+            return 0.0
+        if normalized_sentence == normalized_quote:
+            return 1.0
+        if normalized_sentence in normalized_quote:
+            return 1.0
+        if normalized_quote in normalized_sentence:
+            return len(normalized_quote) / max(len(normalized_sentence), 1)
+        return 0.0
 
     def _sentence_type_summary(self, parsed_sentences: list) -> dict[str, int]:
         summary = {"claim": 0, "synthesis": 0, "structure": 0, "no_ref": 0}
