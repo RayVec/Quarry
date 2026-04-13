@@ -336,6 +336,17 @@ function updateRecentResearch(current: RecentResearchItem[], query: string): Rec
   return [nextItem, ...deduped].slice(0, MAX_RECENT_RESEARCH_ITEMS);
 }
 
+function loadInitialClientState(): {
+  thread: ThreadEntry[];
+  recentResearch: RecentResearchItem[];
+} {
+  const thread = loadPersistedThread();
+  return {
+    thread,
+    recentResearch: loadPersistedRecentResearch(thread),
+  };
+}
+
 function formatRecentResearchDate(value: string) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) {
@@ -351,11 +362,10 @@ function formatRecentResearchDate(value: string) {
 }
 
 export default function App() {
+  const [initialClientState] = useState(loadInitialClientState);
   const [query, setQuery] = useState("");
-  const [thread, setThread] = useState<ThreadEntry[]>(() => loadPersistedThread());
-  const [recentResearch, setRecentResearch] = useState<RecentResearchItem[]>(() =>
-    loadPersistedRecentResearch(loadPersistedThread()),
-  );
+  const [thread, setThread] = useState<ThreadEntry[]>(initialClientState.thread);
+  const [recentResearch, setRecentResearch] = useState<RecentResearchItem[]>(initialClientState.recentResearch);
   const [loading, setLoading] = useState(false);
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
   const [drawerTab, setDrawerTab] = useState<"settings" | "diagnostics">("settings");
@@ -367,6 +377,7 @@ export default function App() {
   const [hostedSettingsError, setHostedSettingsError] = useState<string | null>(null);
   const [hostedSettingsSaveNotice, setHostedSettingsSaveNotice] = useState<string | null>(null);
   const resumedPersistedPendingRef = useRef(false);
+  const pollTokenRef = useRef(0);
   const workspaceColumnRef = useRef<HTMLElement | null>(null);
   const dockedComposerRef = useRef<HTMLFormElement | null>(null);
   const localCommentIds = useRef(new Set<string>());
@@ -446,10 +457,18 @@ export default function App() {
     }
 
     setLoading(true);
-    void pollQueryProgress(pending.id, pending.session.session_id).catch(() => {
+    const pollToken = ++pollTokenRef.current;
+    void pollQueryProgress(pending.id, pending.session.session_id, pollToken).catch(() => {
       setLoading(false);
     });
   }, [thread]);
+
+  useEffect(() => {
+    return () => {
+      // Invalidate any in-flight polling loop when the component unmounts.
+      pollTokenRef.current += 1;
+    };
+  }, []);
 
   useLayoutEffect(() => {
     if (!thread.length) {
@@ -570,8 +589,8 @@ export default function App() {
     );
   }
 
-  async function pollQueryProgress(pendingId: string, sessionId: string) {
-    while (true) {
+  async function pollQueryProgress(pendingId: string, sessionId: string, pollToken: number) {
+    while (pollTokenRef.current === pollToken) {
       const response = await api.getSession(sessionId);
       const nextSession = response.session;
       if (nextSession.query_status === "completed") {
@@ -590,6 +609,7 @@ export default function App() {
   }
 
   function handleNewSearch() {
+    pollTokenRef.current += 1;
     startTransition(() => {
       setThread([]);
       setQuery("");
@@ -635,6 +655,8 @@ export default function App() {
     const submittedQuery = (queryOverride ?? query).trim();
     if (!submittedQuery) return;
 
+    pollTokenRef.current += 1;
+
     const pendingId = makeId();
     startTransition(() => {
       setRecentResearch((current) => updateRecentResearch(current, submittedQuery));
@@ -650,7 +672,8 @@ export default function App() {
     try {
       const response = await api.startQuery(submittedQuery);
       startTransition(() => updatePendingSession(pendingId, response.session));
-      await pollQueryProgress(pendingId, response.session.session_id);
+      const pollToken = ++pollTokenRef.current;
+      await pollQueryProgress(pendingId, response.session.session_id, pollToken);
     } catch (error) {
       startTransition(() => {
         setThread((current) => current.filter((entry) => !(isPendingAssistantEntry(entry) && entry.id === pendingId)));
@@ -789,8 +812,12 @@ export default function App() {
     updateComment: handleUpdateSelectionComment,
     deleteComment: handleDeleteSelectionComment,
     refine: async (sessionId: string) => {
-      const response = await api.refine(sessionId);
-      startTransition(() => appendAssistantSession(response.session, "refinement"));
+      try {
+        const response = await api.refine(sessionId);
+        startTransition(() => appendAssistantSession(response.session, "refinement"));
+      } catch {
+        // Keep the current interactive response unchanged if refine fails.
+      }
     },
   };
 

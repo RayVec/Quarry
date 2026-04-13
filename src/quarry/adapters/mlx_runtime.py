@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 import gc
 import importlib
@@ -8,10 +9,10 @@ import inspect
 import json
 from pathlib import Path
 import threading
-from typing import Sequence
 
 from quarry.adapters.in_memory import HeuristicDecompositionClient, HeuristicMetadataEnricher
 from quarry.adapters.interfaces import DecompositionClient, GenerationClient, MetadataEnricher
+from quarry.adapters.structured_payloads import apply_metadata_enrichment, extract_query_facets
 from quarry.domain.models import ChunkObject, GenerationRequest
 from quarry.logging_utils import logger_with_trace
 from quarry.model_cache import resolve_cached_hf_snapshot_path
@@ -40,6 +41,26 @@ def _json_repair_prompt(prompt: str, raw_response: str) -> str:
         "The first character of your response must be '{' and there must be no prefix text.\n"
         f"Previous output:\n{raw_response.strip()}"
     )
+
+
+async def _complete_json_with_repair(
+    *,
+    prompt: str,
+    complete: Callable[[str], Awaitable[str]],
+    repair: Callable[[str], Awaitable[str]],
+    warning_message: str | None = "mlx json parse failed; attempting repair",
+) -> dict[str, object]:
+    raw = await complete(prompt)
+    try:
+        return parse_json_response(raw)
+    except Exception:
+        if warning_message:
+            logger.warning(
+                warning_message,
+                extra={"raw_response": raw, "console_visible": False},
+            )
+        repaired = await repair(_json_repair_prompt(prompt, raw))
+        return parse_json_response(repaired)
 
 
 @dataclass(slots=True)
@@ -363,43 +384,25 @@ class MLXStructuredDecompositionClient(DecompositionClient):
         self.backend = backend
         self.fallback = fallback
 
-    async def _complete_json(self, prompt: str, *, max_new_tokens: int) -> dict[str, object]:
-        raw = await self.backend.complete(prompt, max_new_tokens=max_new_tokens, operation="json_task")
-        try:
-            return parse_json_response(raw)
-        except Exception:
-            logger.warning(
-                "mlx json parse failed; attempting repair",
-                extra={"raw_response": raw, "console_visible": False},
-            )
-            repaired = await self.backend.complete(_json_repair_prompt(prompt, raw), max_new_tokens=max_new_tokens, operation="json_repair")
-            return parse_json_response(repaired)
-
     async def decompose_query(self, query: str, max_facets: int) -> list[str]:
         try:
             prompt = decomposition_prompt(query, max_facets)
-            raw = await self.backend.complete(
-                prompt,
-                max_new_tokens=256,
-                operation="query_decomposition",
-                enable_thinking=False,
-            )
-            try:
-                payload = parse_json_response(raw)
-            except Exception:
-                logger.warning(
-                    "mlx decomposition json parse failed; attempting repair",
-                    extra={"raw_response": raw, "console_visible": False},
-                )
-                repaired = await self.backend.complete(
-                    _json_repair_prompt(prompt, raw),
+            payload = await _complete_json_with_repair(
+                prompt=prompt,
+                complete=lambda current_prompt: self.backend.complete(
+                    current_prompt,
+                    max_new_tokens=256,
+                    operation="query_decomposition",
+                    enable_thinking=False,
+                ),
+                repair=lambda repair_prompt: self.backend.complete(
+                    repair_prompt,
                     max_new_tokens=256,
                     operation="query_decomposition_repair",
                     enable_thinking=False,
-                )
-                payload = parse_json_response(repaired)
-            facets = [str(item) for item in payload.get("facets", []) if str(item).strip()]
-            return facets[:max_facets] or [query]
+                ),
+            )
+            return extract_query_facets(payload, query=query, max_facets=max_facets)
         except Exception:
             if self.fallback is None:
                 raise
@@ -415,33 +418,22 @@ class MLXStructuredMetadataEnricher(MetadataEnricher):
     async def enrich(self, chunk: ChunkObject) -> ChunkObject:
         prompt = metadata_enrichment_prompt(chunk)
         try:
-            raw = await self.backend.complete(
-                prompt,
-                max_new_tokens=256,
-                operation="metadata_enrichment",
-                enable_thinking=False,
-            )
-            try:
-                payload = parse_json_response(raw)
-            except Exception:
-                logger.warning(
-                    "mlx metadata json parse failed; attempting repair",
-                    extra={"raw_response": raw, "console_visible": False},
-                )
-                repaired = await self.backend.complete(
-                    _json_repair_prompt(prompt, raw),
+            payload = await _complete_json_with_repair(
+                prompt=prompt,
+                complete=lambda current_prompt: self.backend.complete(
+                    current_prompt,
+                    max_new_tokens=256,
+                    operation="metadata_enrichment",
+                    enable_thinking=False,
+                ),
+                repair=lambda repair_prompt: self.backend.complete(
+                    repair_prompt,
                     max_new_tokens=256,
                     operation="metadata_enrichment_repair",
                     enable_thinking=False,
-                )
-                payload = parse_json_response(repaired)
-            return chunk.model_copy(
-                update={
-                    "metadata_summary": str(payload.get("summary", chunk.metadata_summary)),
-                    "metadata_entities": [str(item) for item in payload.get("entities", [])],
-                    "metadata_questions": [str(item) for item in payload.get("questions", [])],
-                }
+                ),
             )
+            return apply_metadata_enrichment(chunk, payload)
         except Exception:
             if self.fallback is None:
                 raise
@@ -496,24 +488,24 @@ async def parse_mlx_page_blocks(
     max_new_tokens: int,
 ) -> list[dict[str, object]]:
     prompt = render_parser_prompt(page_number)
-    raw = await model_manager.generate_with_images(
-        model_name,
-        prompt,
-        [image_path],
-        max_tokens=max_new_tokens,
-        temperature=0.0,
-    )
-    try:
-        payload = parse_json_response(raw)
-    except Exception:
-        repaired = await model_manager.generate_with_images(
+    payload = await _complete_json_with_repair(
+        prompt=prompt,
+        complete=lambda current_prompt: model_manager.generate_with_images(
             model_name,
-            _json_repair_prompt(prompt, raw),
+            current_prompt,
             [image_path],
             max_tokens=max_new_tokens,
             temperature=0.0,
-        )
-        payload = parse_json_response(repaired)
+        ),
+        repair=lambda repair_prompt: model_manager.generate_with_images(
+            model_name,
+            repair_prompt,
+            [image_path],
+            max_tokens=max_new_tokens,
+            temperature=0.0,
+        ),
+        warning_message=None,
+    )
     blocks = payload.get("blocks", [])
     if not isinstance(blocks, list):
         raise ValueError("mlx parser did not return a blocks list")

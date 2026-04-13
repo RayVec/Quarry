@@ -7,12 +7,10 @@ import tempfile
 from typing import Callable
 
 from quarry.adapters.local_models import (
-    FaissIndexBundle,
     LocalCrossEncoderReranker,
     LocalMNLIClient,
     LocalSentenceTransformerEmbeddingClient,
     LocalTextCompletionBackend,
-    write_faiss_bundle,
 )
 from quarry.adapters.mlx_runtime import AppleMLXModelManager, MLXTextCompletionBackend
 from quarry.adapters.production import build_metadata_enricher
@@ -20,7 +18,12 @@ from quarry.domain.models import ChunkObject
 from quarry.config import Settings, is_local_component_ready
 from quarry.domain.models import ParsedDocument, RetrievedPassage
 from quarry.ingest.chunking import chunk_document
-from quarry.ingest.indexing import build_vector_index, enrich_chunks, write_artifacts
+from quarry.ingest.indexing import (
+    build_vector_index,
+    enrich_chunks,
+    write_artifacts,
+    write_faiss_artifacts_from_vector_index,
+)
 from quarry.ingest.normalize import detect_quality_issues
 from quarry.ingest.parsers import (
     BasicTextParser,
@@ -240,13 +243,8 @@ def rebuild_indexes(settings: Settings) -> dict[str, object]:
     vector_metadata_path = settings.artifacts_dir / "vector_index_metadata.json"
 
     legacy_vector_path.write_text(json.dumps(vector_index, indent=2))
-    write_faiss_bundle(
-        FaissIndexBundle(
-            embedding_model=str(vector_index["embedding_model"]),
-            dimensions=int(vector_index["dimensions"]),
-            chunk_ids=[entry["chunk_id"] for entry in vector_index.get("vectors", [])],
-            vectors=[[float(value) for value in entry["vector"]] for entry in vector_index.get("vectors", [])],
-        ),
+    write_faiss_artifacts_from_vector_index(
+        vector_index,
         index_path=faiss_index_path,
         metadata_path=vector_metadata_path,
     )

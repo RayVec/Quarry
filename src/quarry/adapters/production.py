@@ -39,6 +39,7 @@ from quarry.adapters.mlx_runtime import (
     MLXStructuredMetadataEnricher,
     MLXTextCompletionBackend,
 )
+from quarry.adapters.structured_payloads import apply_metadata_enrichment, extract_query_facets
 from quarry.config import Settings, is_local_component_ready
 from quarry.domain.models import ChunkObject, ConfidenceLabel, GenerationRequest, RetrievalFilters, RetrievedPassage, RuntimeMode, RuntimeProfile, ScoredReference
 from quarry.hosted_auth import build_openai_compatible_headers
@@ -256,8 +257,7 @@ class HostedQueryDecompositionClient(DecompositionClient):
         try:
             raw = await self.llm.complete(decomposition_prompt(query, max_facets), operation="query_decomposition")
             payload = parse_json_response(raw)
-            facets = [str(item) for item in payload.get("facets", []) if str(item).strip()]
-            return facets[:max_facets] or [query]
+            return extract_query_facets(payload, query=query, max_facets=max_facets)
         except Exception:
             logger.warning("decomposition fell back to heuristic")
             return await self.fallback.decompose_query(query, max_facets)
@@ -272,13 +272,7 @@ class HostedMetadataEnricher(MetadataEnricher):
         try:
             raw = await self.llm.complete(metadata_enrichment_prompt(chunk), operation="metadata_enrichment")
             payload = parse_json_response(raw)
-            return chunk.model_copy(
-                update={
-                    "metadata_summary": str(payload.get("summary", chunk.metadata_summary)),
-                    "metadata_entities": [str(item) for item in payload.get("entities", [])],
-                    "metadata_questions": [str(item) for item in payload.get("questions", [])],
-                }
-            )
+            return apply_metadata_enrichment(chunk, payload)
         except Exception:
             logger.warning("metadata enrichment fell back to heuristic")
             return await self.fallback.enrich(chunk)

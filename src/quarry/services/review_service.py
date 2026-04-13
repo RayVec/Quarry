@@ -104,6 +104,137 @@ class ReviewService:
             )
         return self.session_store.save(session)
 
+    def _next_citation_id(self, session: SessionState) -> int:
+        return max((entry.citation_id for entry in session.citation_index), default=0) + 1
+
+    async def _retrieve_candidates(
+        self,
+        *,
+        session: SessionState,
+        facets: list[str],
+    ) -> list[CitationIndexEntry]:
+        passages, _diagnostics = await self.hybrid_retriever.retrieve(
+            original_query=session.original_query,
+            facets=facets or session.facets,
+            query_type=session.query_type,
+        )
+        seeded_candidates = build_citation_index(
+            passages,
+            starting_id=self._next_citation_id(session),
+            ambiguity_gap_threshold=self.ambiguity_gap_threshold,
+        )
+        existing_chunk_ids = {entry.chunk_id for entry in session.citation_index}
+        return [entry for entry in seeded_candidates if entry.chunk_id not in existing_chunk_ids][: self.scoped_top_k]
+
+    def _build_fallback_candidates(
+        self,
+        *,
+        session: SessionState,
+        excluded_chunk_ids: set[str],
+        source_facet: str,
+    ) -> list[CitationIndexEntry]:
+        fallback_chunks = [
+            chunk
+            for chunk in self._chunk_lookup.values()
+            if chunk.chunk_id not in excluded_chunk_ids
+        ][: self.scoped_top_k]
+        starting_id = self._next_citation_id(session)
+        return [
+            CitationIndexEntry(
+                citation_id=starting_id + index,
+                chunk_id=chunk.chunk_id,
+                text=chunk.text,
+                document_id=chunk.document_id,
+                document_title=chunk.document_title,
+                section_heading=chunk.section_heading,
+                section_path=chunk.section_path,
+                page_number=chunk.page_start,
+                page_end=chunk.page_end,
+                retrieval_score=0.0,
+                source_facet=source_facet,
+                source_facets=[source_facet],
+            )
+            for index, chunk in enumerate(fallback_chunks)
+        ]
+
+    def _persist_candidates(
+        self,
+        *,
+        session: SessionState,
+        candidates: list[CitationIndexEntry],
+    ) -> list[CitationIndexEntry]:
+        if not candidates:
+            return []
+        by_chunk_id = {entry.chunk_id: entry for entry in session.citation_index}
+        next_citation_id = self._next_citation_id(session)
+        persisted: list[CitationIndexEntry] = []
+        for candidate in candidates:
+            existing = by_chunk_id.get(candidate.chunk_id)
+            if existing is not None:
+                existing.source_facets = list(
+                    dict.fromkeys([*(existing.source_facets or [existing.source_facet]), *(candidate.source_facets or [candidate.source_facet])])
+                )
+                persisted.append(existing)
+                continue
+            stored = candidate.model_copy(update={"citation_id": next_citation_id})
+            session.citation_index.append(stored)
+            by_chunk_id[stored.chunk_id] = stored
+            persisted.append(stored)
+            next_citation_id += 1
+        return persisted
+
+    def _apply_replacement_to_session(
+        self,
+        *,
+        session: SessionState,
+        sentence_index: int,
+        citation_id: int,
+        replacement: CitationIndexEntry,
+        reviewer_note: str,
+    ) -> bool:
+        target = next((entry for entry in session.citation_index if entry.citation_id == citation_id), None)
+        if target is None:
+            return False
+
+        target.chunk_id = replacement.chunk_id
+        target.text = replacement.text
+        target.document_id = replacement.document_id
+        target.document_title = replacement.document_title
+        target.section_heading = replacement.section_heading
+        target.section_path = replacement.section_path
+        target.page_number = replacement.page_number
+        target.page_end = replacement.page_end
+        target.replacement_pending = True
+        target.reviewer_note = reviewer_note
+
+        if 0 <= sentence_index < len(session.parsed_sentences):
+            sentence = session.parsed_sentences[sentence_index]
+            for reference in sentence.references:
+                if reference.citation_id == citation_id:
+                    reference.matched_chunk_id = replacement.chunk_id
+                    reference.document_id = replacement.document_id
+                    reference.document_title = replacement.document_title
+                    reference.section_heading = replacement.section_heading
+                    reference.section_path = replacement.section_path
+                    reference.page_number = replacement.page_number
+                    reference.replacement_pending = True
+            sentence.match_quality = MatchQuality.PARTIAL
+
+        return True
+
+    def _record_citation_replacement(
+        self,
+        *,
+        session: SessionState,
+        citation_id: int,
+        replacement_chunk_id: str,
+    ) -> None:
+        if any(entry.citation_id == citation_id for entry in session.feedback.citation_replacements):
+            return
+        session.feedback.citation_replacements.append(
+            CitationReplacement(citation_id=citation_id, replacement_chunk_id=replacement_chunk_id)
+        )
+
     async def get_citation_alternatives(self, session_id: str, citation_id: int) -> ScopedRetrievalEnvelope:
         session = self.session_store.get(session_id)
         target_citation = next((entry for entry in session.citation_index if entry.citation_id == citation_id), None)
@@ -118,47 +249,19 @@ class ReviewService:
                 break
 
         facets = [sentence.sentence_text] if sentence and sentence.sentence_text.strip() else session.facets
-        passages, _diagnostics = await self.hybrid_retriever.retrieve(
-            original_query=session.original_query,
-            facets=facets or session.facets,
-            query_type=session.query_type,
-        )
-
-        alternative_citations = build_citation_index(
-            passages,
-            starting_id=max((entry.citation_id for entry in session.citation_index), default=0) + 1,
-            ambiguity_gap_threshold=self.ambiguity_gap_threshold,
-        )
-
-        existing_chunk_ids = {entry.chunk_id for entry in session.citation_index}
-        filtered = [entry for entry in alternative_citations if entry.chunk_id not in existing_chunk_ids][: self.scoped_top_k]
-        if filtered:
-            return ScopedRetrievalEnvelope(citations=filtered)
-
-        fallback_candidates = [
-            chunk
-            for chunk in self._chunk_lookup.values()
-            if chunk.chunk_id not in existing_chunk_ids and chunk.chunk_id != target_citation.chunk_id
-        ][: self.scoped_top_k]
-
-        fallback = [
-            CitationIndexEntry(
-                citation_id=max((entry.citation_id for entry in session.citation_index), default=0) + index + 1,
-                chunk_id=chunk.chunk_id,
-                text=chunk.text,
-                document_id=chunk.document_id,
-                document_title=chunk.document_title,
-                section_heading=chunk.section_heading,
-                section_path=chunk.section_path,
-                page_number=chunk.page_start,
-                page_end=chunk.page_end,
-                retrieval_score=0.0,
+        alternatives = await self._retrieve_candidates(session=session, facets=facets)
+        if not alternatives:
+            excluded_chunk_ids = {entry.chunk_id for entry in session.citation_index}
+            excluded_chunk_ids.add(target_citation.chunk_id)
+            alternatives = self._build_fallback_candidates(
+                session=session,
+                excluded_chunk_ids=excluded_chunk_ids,
                 source_facet="alternative_fallback",
-                source_facets=["alternative_fallback"],
             )
-            for index, chunk in enumerate(fallback_candidates)
-        ]
-        return ScopedRetrievalEnvelope(citations=fallback)
+
+        persisted = self._persist_candidates(session=session, candidates=alternatives)
+        self.session_store.save(session)
+        return ScopedRetrievalEnvelope(citations=persisted)
 
     def replace_with_alternative(
         self,
@@ -168,21 +271,25 @@ class ReviewService:
         replacement_citation_id: int,
     ) -> SessionState:
         session = self.session_store.get(session_id)
-        target = next((entry for entry in session.citation_index if entry.citation_id == citation_id), None)
         replacement = next((entry for entry in session.citation_index if entry.citation_id == replacement_citation_id), None)
-        if target is None or replacement is None:
+        if replacement is None:
             return self.session_store.save(session)
 
-        target.chunk_id = replacement.chunk_id
-        target.text = replacement.text
-        target.document_id = replacement.document_id
-        target.document_title = replacement.document_title
-        target.section_heading = replacement.section_heading
-        target.section_path = replacement.section_path
-        target.page_number = replacement.page_number
-        target.page_end = replacement.page_end
-        target.replacement_pending = True
-        target.reviewer_note = "Replaced via citation feedback."
+        replaced = self._apply_replacement_to_session(
+            session=session,
+            sentence_index=sentence_index,
+            citation_id=citation_id,
+            replacement=replacement,
+            reviewer_note="Replaced via citation feedback.",
+        )
+        if not replaced:
+            return self.session_store.save(session)
+
+        self._record_citation_replacement(
+            session=session,
+            citation_id=citation_id,
+            replacement_chunk_id=replacement.chunk_id,
+        )
 
         session.feedback.citation_feedback = [
             fb
@@ -201,43 +308,17 @@ class ReviewService:
             return ScopedRetrievalEnvelope(citations=[])
 
         facets = [sentence.sentence_text] if sentence.sentence_text.strip() else session.facets
-        passages, _diagnostics = await self.hybrid_retriever.retrieve(
-            original_query=session.original_query,
-            facets=facets or session.facets,
-            query_type=session.query_type,
-        )
-        scoped = build_citation_index(
-            passages,
-            starting_id=max((entry.citation_id for entry in session.citation_index), default=0) + 1,
-            ambiguity_gap_threshold=self.ambiguity_gap_threshold,
-        )
-        existing_chunk_ids = {entry.chunk_id for entry in session.citation_index}
-        filtered = [entry for entry in scoped if entry.chunk_id not in existing_chunk_ids][: self.scoped_top_k]
-        if filtered:
-            return ScopedRetrievalEnvelope(citations=filtered)
+        scoped = await self._retrieve_candidates(session=session, facets=facets)
+        if scoped:
+            return ScopedRetrievalEnvelope(citations=scoped)
 
-        fallback_candidates = [
-            chunk
-            for chunk in self._chunk_lookup.values()
-            if chunk.chunk_id not in existing_chunk_ids and chunk.chunk_id != seed.chunk_id
-        ][: self.scoped_top_k]
-        fallback = [
-            CitationIndexEntry(
-                citation_id=max((entry.citation_id for entry in session.citation_index), default=0) + index + 1,
-                chunk_id=chunk.chunk_id,
-                text=chunk.text,
-                document_id=chunk.document_id,
-                document_title=chunk.document_title,
-                section_heading=chunk.section_heading,
-                section_path=chunk.section_path,
-                page_number=chunk.page_start,
-                page_end=chunk.page_end,
-                retrieval_score=0.0,
-                source_facet="scoped_fallback",
-                source_facets=["scoped_fallback"],
-            )
-            for index, chunk in enumerate(fallback_candidates)
-        ]
+        excluded_chunk_ids = {entry.chunk_id for entry in session.citation_index}
+        excluded_chunk_ids.add(seed.chunk_id)
+        fallback = self._build_fallback_candidates(
+            session=session,
+            excluded_chunk_ids=excluded_chunk_ids,
+            source_facet="scoped_fallback",
+        )
         return ScopedRetrievalEnvelope(citations=fallback)
 
     def replace_citation(
@@ -252,36 +333,34 @@ class ReviewService:
         if replacement is None:
             return self.session_store.save(session)
 
-        target = next((entry for entry in session.citation_index if entry.citation_id == citation_id), None)
-        if target is not None:
-            target.chunk_id = replacement.chunk_id
-            target.text = replacement.text
-            target.document_id = replacement.document_id
-            target.document_title = replacement.document_title
-            target.section_heading = replacement.section_heading
-            target.section_path = replacement.section_path
-            target.page_number = replacement.page_start
-            target.page_end = replacement.page_end
-            target.replacement_pending = True
-            target.reviewer_note = "Reviewer selected replacement passage."
-
-        if 0 <= sentence_index < len(session.parsed_sentences):
-            sentence = session.parsed_sentences[sentence_index]
-            for reference in sentence.references:
-                if reference.citation_id == citation_id:
-                    reference.matched_chunk_id = replacement.chunk_id
-                    reference.document_id = replacement.document_id
-                    reference.document_title = replacement.document_title
-                    reference.section_heading = replacement.section_heading
-                    reference.section_path = replacement.section_path
-                    reference.page_number = replacement.page_start
-                    reference.replacement_pending = True
-            sentence.match_quality = MatchQuality.PARTIAL
-
-        if not any(replacement.citation_id == citation_id for replacement in session.feedback.citation_replacements):
-            session.feedback.citation_replacements.append(
-                CitationReplacement(citation_id=citation_id, replacement_chunk_id=request.replacement_chunk_id)
-            )
+        replacement_entry = CitationIndexEntry(
+            citation_id=-1,
+            chunk_id=replacement.chunk_id,
+            text=replacement.text,
+            document_id=replacement.document_id,
+            document_title=replacement.document_title,
+            section_heading=replacement.section_heading,
+            section_path=replacement.section_path,
+            page_number=replacement.page_start,
+            page_end=replacement.page_end,
+            retrieval_score=0.0,
+            source_facet="scoped_fallback",
+            source_facets=["scoped_fallback"],
+        )
+        replaced = self._apply_replacement_to_session(
+            session=session,
+            sentence_index=sentence_index,
+            citation_id=citation_id,
+            replacement=replacement_entry,
+            reviewer_note="Reviewer selected replacement passage.",
+        )
+        if not replaced:
+            return self.session_store.save(session)
+        self._record_citation_replacement(
+            session=session,
+            citation_id=citation_id,
+            replacement_chunk_id=request.replacement_chunk_id,
+        )
         return self.session_store.save(session)
 
     def undo_replacement(self, session_id: str, citation_id: int) -> SessionState:

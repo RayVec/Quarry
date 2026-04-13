@@ -113,6 +113,29 @@ async def build_vector_index(
     }
 
 
+def build_faiss_bundle_from_vector_index(vector_index: dict[str, object]) -> FaissIndexBundle:
+    vectors = vector_index.get("vectors", [])
+    return FaissIndexBundle(
+        embedding_model=str(vector_index["embedding_model"]),
+        dimensions=int(vector_index["dimensions"]),
+        chunk_ids=[entry["chunk_id"] for entry in vectors],
+        vectors=[[float(value) for value in entry["vector"]] for entry in vectors],
+    )
+
+
+def write_faiss_artifacts_from_vector_index(
+    vector_index: dict[str, object],
+    *,
+    index_path: Path,
+    metadata_path: Path,
+) -> None:
+    write_faiss_bundle(
+        build_faiss_bundle_from_vector_index(vector_index),
+        index_path=index_path,
+        metadata_path=metadata_path,
+    )
+
+
 def write_artifacts(
     *,
     settings: Settings,
@@ -156,13 +179,8 @@ def write_artifacts(
         progress(f"writing artifacts for {len(parsed_documents)} document(s) into {settings.artifacts_dir}")
     structural_index_path.write_text(json.dumps([entry.model_dump() for entry in structural_index], indent=2))
     legacy_vector_json_path.write_text(json.dumps(vector_index, indent=2))
-    write_faiss_bundle(
-        FaissIndexBundle(
-            embedding_model=str(vector_index["embedding_model"]),
-            dimensions=int(vector_index["dimensions"]),
-            chunk_ids=[entry["chunk_id"] for entry in vector_index.get("vectors", [])],
-            vectors=[[float(value) for value in entry["vector"]] for entry in vector_index.get("vectors", [])],
-        ),
+    write_faiss_artifacts_from_vector_index(
+        vector_index,
         index_path=vector_index_path,
         metadata_path=vector_metadata_path,
     )

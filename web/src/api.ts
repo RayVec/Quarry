@@ -5,7 +5,10 @@ import type {
     SessionEnvelope,
 } from "./types";
 
-const API_ROOT = "http://127.0.0.1:8000/api/v1";
+const maybeEnv = (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env;
+const API_ROOT =
+  maybeEnv?.VITE_API_ROOT?.replace(/\/+$/, "") ||
+  "http://127.0.0.1:8000/api/v1";
 
 type ApiErrorPayload = {
   code?: string;

@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from dataclasses import dataclass
 import json
 from pathlib import Path
 import threading
-from typing import Sequence
+from typing import Sequence, TypeVar
 
 import numpy as np
 
@@ -20,12 +21,15 @@ from quarry.adapters.in_memory import (
     tokenize,
 )
 from quarry.adapters.interfaces import DecompositionClient, EmbeddingClient, GenerationClient, MetadataEnricher, NLIClient, Reranker, Retriever
+from quarry.adapters.structured_payloads import apply_metadata_enrichment, extract_query_facets
 from quarry.domain.models import ChunkObject, ConfidenceLabel, GenerationRequest, RetrievalFilters, RetrievedPassage, ScoredReference
 from quarry.logging_utils import elapsed_ms, logger_with_trace, timed
+from quarry.model_cache import resolve_cached_hf_snapshot_path
 from quarry.prompts import SHARED_SYSTEM_PROMPT, decomposition_prompt, generation_prompt, metadata_enrichment_prompt, parse_json_response
 
 
 logger = logger_with_trace(__name__)
+_T = TypeVar("_T")
 
 
 def resolve_torch_device(preferred: str = "auto") -> str:
@@ -38,6 +42,43 @@ def resolve_torch_device(preferred: str = "auto") -> str:
     if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available():
         return "mps"
     return "cpu"
+
+
+def load_hf_asset_with_cache(
+    model_name: str,
+    loader: Callable[[str], _T],
+    *,
+    component: str,
+) -> _T:
+    cached_model_path = resolve_cached_hf_snapshot_path(model_name)
+    load_target = str(cached_model_path) if cached_model_path is not None else model_name
+    try:
+        asset = loader(load_target)
+    except Exception:
+        if cached_model_path is None or load_target == model_name:
+            raise
+        logger.info(
+            "cached Hugging Face snapshot load failed; retrying via repo id",
+            extra={
+                "component": component,
+                "model": model_name,
+                "cached_path": str(cached_model_path),
+                "console_visible": False,
+            },
+        )
+        return loader(model_name)
+    else:
+        if cached_model_path is not None and load_target != model_name:
+            logger.info(
+                "Hugging Face asset loaded from local snapshot",
+                extra={
+                    "component": component,
+                    "model": model_name,
+                    "cached_path": str(cached_model_path),
+                    "console_visible": False,
+                },
+            )
+        return asset
 
 
 def prepare_embedding_text(text: str, *, model_name: str, is_query: bool) -> str:
@@ -128,11 +169,17 @@ class LocalTextCompletionBackend:
                 from transformers import AutoModelForCausalLM, AutoTokenizer
 
                 self._device = resolve_torch_device(self.device)
-                tokenizer = AutoTokenizer.from_pretrained(self.model_name)
-                model = AutoModelForCausalLM.from_pretrained(
+                tokenizer, model = load_hf_asset_with_cache(
                     self.model_name,
-                    torch_dtype=self._resolve_dtype(torch),
-                    device_map="auto" if self._device != "cpu" else None,
+                    lambda load_target: (
+                        AutoTokenizer.from_pretrained(load_target),
+                        AutoModelForCausalLM.from_pretrained(
+                            load_target,
+                            torch_dtype=self._resolve_dtype(torch),
+                            device_map="auto" if self._device != "cpu" else None,
+                        ),
+                    ),
+                    component="text",
                 )
                 if self._device == "cpu":
                     model.to(torch.device(self._device))
@@ -238,8 +285,7 @@ class LocalStructuredDecompositionClient(DecompositionClient):
         try:
             raw = await self.backend.complete(decomposition_prompt(query, max_facets), max_new_tokens=256, operation="query_decomposition")
             payload = parse_json_response(raw)
-            facets = [str(item) for item in payload.get("facets", []) if str(item).strip()]
-            return facets[:max_facets] or [query]
+            return extract_query_facets(payload, query=query, max_facets=max_facets)
         except Exception:
             logger.warning("local decomposition fell back to heuristic")
             return await self.fallback.decompose_query(query, max_facets)
@@ -254,13 +300,7 @@ class LocalStructuredMetadataEnricher(MetadataEnricher):
         try:
             raw = await self.backend.complete(metadata_enrichment_prompt(chunk), max_new_tokens=256, operation="metadata_enrichment")
             payload = parse_json_response(raw)
-            return chunk.model_copy(
-                update={
-                    "metadata_summary": str(payload.get("summary", chunk.metadata_summary)),
-                    "metadata_entities": [str(item) for item in payload.get("entities", [])],
-                    "metadata_questions": [str(item) for item in payload.get("questions", [])],
-                }
-            )
+            return apply_metadata_enrichment(chunk, payload)
         except Exception:
             logger.warning("local metadata enrichment fell back to heuristic")
             return await self.fallback.enrich(chunk)
@@ -313,7 +353,11 @@ class LocalSentenceTransformerEmbeddingClient(EmbeddingClient):
                 kwargs: dict[str, object] = {"device": resolve_torch_device(self.device)}
                 if "nomic" in self.model_name.lower():
                     kwargs["trust_remote_code"] = True
-                self._model = SentenceTransformer(self.model_name, **kwargs)
+                self._model = load_hf_asset_with_cache(
+                    self.model_name,
+                    lambda load_target: SentenceTransformer(load_target, **kwargs),
+                    component="embedding",
+                )
                 self.dimensions = int(self._model.get_sentence_embedding_dimension())
                 self.active_model_name = self.model_name
             except Exception as exc:
@@ -522,7 +566,11 @@ class LocalCrossEncoderReranker(Reranker):
             try:
                 from sentence_transformers import CrossEncoder
 
-                self._model = CrossEncoder(self.model_name, device=resolve_torch_device(self.device))
+                self._model = load_hf_asset_with_cache(
+                    self.model_name,
+                    lambda load_target: CrossEncoder(load_target, device=resolve_torch_device(self.device)),
+                    component="reranker",
+                )
             except Exception as exc:
                 logger.warning("local reranker unavailable", extra={"error": str(exc), "model": self.model_name})
                 self._model = None
@@ -585,8 +633,14 @@ class LocalMNLIClient(NLIClient):
                 from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
                 self._device = resolve_torch_device(self.device)
-                self._tokenizer = AutoTokenizer.from_pretrained(self.model_name)
-                self._model = AutoModelForSequenceClassification.from_pretrained(self.model_name)
+                self._tokenizer, self._model = load_hf_asset_with_cache(
+                    self.model_name,
+                    lambda load_target: (
+                        AutoTokenizer.from_pretrained(load_target),
+                        AutoModelForSequenceClassification.from_pretrained(load_target),
+                    ),
+                    component="nli",
+                )
                 self._model.to(torch.device(self._device))
                 self._model.eval()
             except Exception as exc:

@@ -112,7 +112,7 @@ def open_diagnostics(page: Page) -> None:
 
 
 def close_diagnostics(page: Page) -> None:
-    page.get_by_test_id("close-diagnostics").click()
+    page.get_by_test_id("diagnostics-drawer").get_by_role("button", name="Close").click()
     expect(page.get_by_test_id("diagnostics-drawer")).to_be_hidden()
 
 
@@ -134,7 +134,7 @@ def open_selection_comment_editor(page: Page) -> None:
         """
         () => {
           const host = document.querySelector('.response-reading-flow');
-          const target = document.querySelector('.response-inline-sentence-text');
+                    const target = document.querySelector('.response-inline-sentence-copy');
           if (!host || !target) return;
 
           const walker = document.createTreeWalker(target, NodeFilter.SHOW_TEXT);
@@ -167,21 +167,16 @@ def test_response_review_dialog_and_feedback_flow(page: Page, web_server) -> Non
     page.locator("[data-testid^='citation-']").first.click()
     expect(page.get_by_test_id("citation-dialog")).to_be_visible()
 
-    page.get_by_test_id("mismatch-note").fill("The first passage is directionally right but I want a stronger local citation.")
-    page.get_by_test_id("save-mismatch").click()
-    page.get_by_test_id("show-more-citations").click()
-    replacement = page.locator("[data-testid^='replace-citation-']").first
+    page.get_by_test_id("dislike-citation").click()
+    page.get_by_test_id("load-alternatives").click()
+    replacement = page.locator("[data-testid^='replace-with-alternative-']").first
     expect(replacement).to_be_visible()
     replacement.click()
 
     expect(page.get_by_test_id("citation-dialog")).to_be_hidden()
     expect(page.locator(".citation-pill.replaced").first).to_be_visible()
 
-    expect(page.get_by_test_id("feedback-summary")).to_contain_text("1 comments captured, 1 citation replacements pending.")
-
-    page.locator("[data-testid^='citation-']").first.click()
-    page.get_by_test_id("undo-citation-replacement").click()
-    expect(page.locator(".citation-pill.replaced")).to_have_count(0)
+    expect(page.get_by_test_id("feedback-summary")).to_contain_text("0 comments captured, 1 citation replacements pending.")
 
     open_selection_comment_editor(page)
     page.get_by_test_id("selection-comment-input").fill(
@@ -196,7 +191,7 @@ def test_response_review_dialog_and_feedback_flow(page: Page, web_server) -> Non
     edit_input = page.locator("[data-testid^='selection-comment-edit-input-']").first
     edit_input.fill("Updated comment for this highlighted passage.")
     page.locator("[data-testid^='update-selection-comment-']").first.click()
-    expect(page.get_by_test_id("feedback-summary")).to_contain_text("2 comments captured, 0 citation replacements pending.")
+    expect(page.get_by_test_id("feedback-summary")).to_contain_text("1 comments captured, 1 citation replacements pending.")
 
 
 def test_unified_refinement_flow(page: Page, web_server) -> None:
@@ -216,6 +211,6 @@ def test_unified_refinement_flow(page: Page, web_server) -> None:
 
     open_diagnostics(page)
     assert parse_metric(page.get_by_test_id("status-sentences").inner_text()) > 0
-    expect(page.get_by_test_id("status-refinements")).to_have_text("Refinements: 1")
+    expect(page.get_by_test_id("status-refinements")).to_have_text("1")
     close_diagnostics(page)
 

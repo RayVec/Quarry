@@ -44,6 +44,7 @@ export interface CitationIndexEntry {
   page_end?: number | null;
   retrieval_score: number;
   source_facet: string;
+  source_facets: string[];
   replacement_pending: boolean;
   reviewer_note?: string | null;
   ambiguity_review_required: boolean;

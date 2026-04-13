@@ -93,6 +93,32 @@ function clampPosition(value: number, min: number, max: number) {
 const COMMENT_GUTTER_INSET = 4;
 const COMMENT_TRIGGER_SIZE = 32;
 const COMMENT_CARD_FALLBACK_WIDTH = 420;
+const SENTENCE_COPY_SELECTOR = "[data-sentence-copy-index]";
+
+function _closestSentenceCopy(node: Node | null): HTMLElement | null {
+  if (!node) {
+    return null;
+  }
+  if (node instanceof HTMLElement) {
+    return node.closest<HTMLElement>(SENTENCE_COPY_SELECTOR);
+  }
+  return node.parentElement?.closest<HTMLElement>(SENTENCE_COPY_SELECTOR) ?? null;
+}
+
+function _rangePointOffsetInSentence(
+  sentenceCopyElement: HTMLElement,
+  boundaryContainer: Node,
+  boundaryOffset: number,
+): number | null {
+  const localRange = document.createRange();
+  localRange.selectNodeContents(sentenceCopyElement);
+  try {
+    localRange.setEnd(boundaryContainer, boundaryOffset);
+  } catch {
+    return null;
+  }
+  return localRange.toString().length;
+}
 
 export function ResponseReview({
   session,
@@ -266,20 +292,53 @@ export function ResponseReview({
       return;
     }
 
-    // Robust matching: strip citations like [1] and normalize whitespace
-    const cleanSelected = selectedText
-      .replace(/\[\d+\]/g, "")
-      .replace(/\s+/g, " ")
-      .trim();
-    if (!cleanSelected) return; // Should not trigger for just selecting brackets or spaces
+    const startSentenceCopy = _closestSentenceCopy(range.startContainer);
+    const endSentenceCopy = _closestSentenceCopy(range.endContainer);
+    if (!startSentenceCopy || !endSentenceCopy) {
+      setSelectionDraft(null);
+      return;
+    }
 
-    // Use the same coordinate space as sentenceRanges: concatenated sentence_text
-    // joined by single-space separators. This avoids the mismatch with
-    // generated_response which may include citation markers, paragraph breaks, etc.
+    const startSentenceIndex = Number(startSentenceCopy.dataset.sentenceCopyIndex);
+    const endSentenceIndex = Number(endSentenceCopy.dataset.sentenceCopyIndex);
+    if (!Number.isInteger(startSentenceIndex) || !Number.isInteger(endSentenceIndex)) {
+      setSelectionDraft(null);
+      return;
+    }
+
+    const startSentenceRange = sentenceRanges.get(startSentenceIndex);
+    const endSentenceRange = sentenceRanges.get(endSentenceIndex);
+    if (!startSentenceRange || !endSentenceRange) {
+      setSelectionDraft(null);
+      return;
+    }
+
+    const localStart = _rangePointOffsetInSentence(
+      startSentenceCopy,
+      range.startContainer,
+      range.startOffset,
+    );
+    const localEnd = _rangePointOffsetInSentence(
+      endSentenceCopy,
+      range.endContainer,
+      range.endOffset,
+    );
+    if (localStart === null || localEnd === null) {
+      setSelectionDraft(null);
+      return;
+    }
+
+    const start = Math.max(0, startSentenceRange.start + localStart);
+    const end = Math.max(start, endSentenceRange.start + localEnd);
+
     const sentenceConcatenated = visibleSentences
       .map((s) => s.sentence_text)
       .join(" ");
-    const start = sentenceConcatenated.indexOf(cleanSelected);
+    const cleanSelected = sentenceConcatenated
+      .slice(start, end)
+      .replace(/\s+/g, " ")
+      .trim();
+    if (!cleanSelected) return; // Should not trigger for just selecting brackets or spaces
 
     const rect = range.getBoundingClientRect();
     if (!rect.width && !rect.height) return;
@@ -297,8 +356,8 @@ export function ResponseReview({
 
     setSelectionDraft({
       text: cleanSelected || selectedText,
-      start: Math.max(0, start),
-      end: Math.max(0, start) + (cleanSelected || selectedText).length,
+      start,
+      end,
       rect,
       spanTop,
       spanBottom,
@@ -461,71 +520,77 @@ export function ResponseReview({
                   key={sentence.sentence_index}
                 >
                   <span className="response-inline-sentence-text">
-                    {boundaryList.slice(0, -1).map((segmentStart, i) => {
-                      const segmentEnd = boundaryList[i + 1];
-                      const segmentText = sentence.sentence_text.slice(
-                        segmentStart,
-                        segmentEnd,
-                      );
-                      const globalStart = sentenceStart + segmentStart;
-                      const segmentCommentIds = comments
-                        .filter(
-                          (comment) =>
-                            comment.char_start <
-                              globalStart + segmentText.length &&
-                            comment.char_end > globalStart,
-                        )
-                        .map((comment) => comment.comment_id);
-                      const inDraft =
-                        hasDraftHighlight &&
-                        draftLocalEnd > draftLocalStart &&
-                        segmentStart >= draftLocalStart &&
-                        segmentStart < draftLocalEnd;
-                      if (!segmentCommentIds.length) {
+                    <span
+                      className="response-inline-sentence-copy"
+                      data-sentence-copy-index={sentence.sentence_index}
+                    >
+                      {boundaryList.slice(0, -1).map((segmentStart, i) => {
+                        const segmentEnd = boundaryList[i + 1];
+                        const segmentText = sentence.sentence_text.slice(
+                          segmentStart,
+                          segmentEnd,
+                        );
+                        const globalStart = sentenceStart + segmentStart;
+                        const segmentCommentIds = comments
+                          .filter(
+                            (comment) =>
+                              comment.char_start <
+                                globalStart + segmentText.length &&
+                              comment.char_end > globalStart,
+                          )
+                          .map((comment) => comment.comment_id);
+                        const inDraft =
+                          hasDraftHighlight &&
+                          draftLocalEnd > draftLocalStart &&
+                          segmentStart >= draftLocalStart &&
+                          segmentStart < draftLocalEnd;
+                        if (!segmentCommentIds.length) {
+                          return (
+                            <span
+                              key={`${sentence.sentence_index}-seg-${i}`}
+                              className={
+                                inDraft ? "draft-selection-highlight" : undefined
+                              }
+                            >
+                              {segmentText}
+                            </span>
+                          );
+                        }
                         return (
                           <span
                             key={`${sentence.sentence_index}-seg-${i}`}
-                            className={
-                              inDraft ? "draft-selection-highlight" : undefined
-                            }
-                          >
-                            {segmentText}
-                          </span>
-                        );
-                      }
-                      return (
-                        <span
-                          key={`${sentence.sentence_index}-seg-${i}`}
-                          className={`annotation-highlight${inDraft ? " draft-selection-highlight" : ""}`}
-                          data-testid={`annotation-highlight-${sentence.sentence_index}-${i}`}
-                          data-comment-id={segmentCommentIds.join(",")}
-                          role="button"
-                          tabIndex={0}
-                          onClick={(event) =>
-                            openExistingPopup(
-                              segmentCommentIds,
-                              (
-                                event.currentTarget as HTMLElement
-                              ).getBoundingClientRect(),
-                            )
-                          }
-                          onKeyDown={(event) => {
-                            if (event.key === "Enter" || event.key === " ") {
-                              event.preventDefault();
+                            className={`annotation-highlight${inDraft ? " draft-selection-highlight" : ""}`}
+                            data-testid={`annotation-highlight-${sentence.sentence_index}-${i}`}
+                            data-comment-id={segmentCommentIds.join(",")}
+                            role="button"
+                            tabIndex={0}
+                            onClick={(event) =>
                               openExistingPopup(
                                 segmentCommentIds,
                                 (
                                   event.currentTarget as HTMLElement
                                 ).getBoundingClientRect(),
-                              );
+                              )
                             }
-                          }}
-                        >
-                          {segmentText}
-                        </span>
-                      );
-                    })}{" "}
-                    {sentence.references.map((reference, index) => {
+                            onKeyDown={(event) => {
+                              if (event.key === "Enter" || event.key === " ") {
+                                event.preventDefault();
+                                openExistingPopup(
+                                  segmentCommentIds,
+                                  (
+                                    event.currentTarget as HTMLElement
+                                  ).getBoundingClientRect(),
+                                );
+                              }
+                            }}
+                          >
+                            {segmentText}
+                          </span>
+                        );
+                      })}
+                    </span>{" "}
+                    <span className="response-inline-citations">
+                      {sentence.references.map((reference, index) => {
                       if (!reference.citation_id) return null;
 
                       const citation = citationById.get(reference.citation_id);
@@ -568,48 +633,49 @@ export function ResponseReview({
                       const tooltipMatchLabel =
                         unifiedMatch?.headline ?? matchQualityTooltipLabel(pillQuality);
 
-                      return (
-                        <Button
-                          className={`citation-pill citation-pill--${pillQuality} ${reference.replacement_pending ? "replaced" : ""} ${
-                            hasCommentOverlay
-                              ? "tooltip-suppressed"
-                              : "citation-pill-tooltip-anchor"
-                          }`}
-                          data-testid={`citation-${sentence.sentence_index}-${reference.citation_id}`}
-                          key={`${sentence.sentence_index}-${index}`}
-                          onClick={() =>
-                            onOpenCitation(
-                              sentence,
-                              reference.citation_id!,
-                              reference.reference_quote,
-                            )
-                          }
-                          type="button"
-                        >
-                          [
-                          {displayCitationMap.get(reference.citation_id) ??
-                            reference.citation_id}
-                          ]
-                          {feedback === "like" && <ThumbsUp aria-label="Liked" className="ml-1 inline" />}
-                          {feedback === "dislike" && <ThumbsDown aria-label="Disliked" className="ml-1 inline" />}
-                          {!hasCommentOverlay ? (
-                            <span className="citation-pill-tooltip" role="tooltip">
-                              <span className="citation-pill-tooltip-quote">
-                                {tooltipQuote}
+                        return (
+                          <Button
+                            className={`citation-pill citation-pill--${pillQuality} ${reference.replacement_pending ? "replaced" : ""} ${
+                              hasCommentOverlay
+                                ? "tooltip-suppressed"
+                                : "citation-pill-tooltip-anchor"
+                            }`}
+                            data-testid={`citation-${sentence.sentence_index}-${reference.citation_id}`}
+                            key={`${sentence.sentence_index}-${index}`}
+                            onClick={() =>
+                              onOpenCitation(
+                                sentence,
+                                reference.citation_id!,
+                                reference.reference_quote,
+                              )
+                            }
+                            type="button"
+                          >
+                            [
+                            {displayCitationMap.get(reference.citation_id) ??
+                              reference.citation_id}
+                            ]
+                            {feedback === "like" && <ThumbsUp aria-label="Liked" className="ml-1 inline" />}
+                            {feedback === "dislike" && <ThumbsDown aria-label="Disliked" className="ml-1 inline" />}
+                            {!hasCommentOverlay ? (
+                              <span className="citation-pill-tooltip" role="tooltip">
+                                <span className="citation-pill-tooltip-quote">
+                                  {tooltipQuote}
+                                </span>
+                                <hr className="citation-pill-tooltip-rule" />
+                                <span className="citation-pill-tooltip-doc">
+                                  {tooltipDoc}
+                                </span>
+                                <hr className="citation-pill-tooltip-rule" />
+                                <span className="citation-pill-tooltip-match">
+                                  {tooltipMatchLabel}
+                                </span>
                               </span>
-                              <hr className="citation-pill-tooltip-rule" />
-                              <span className="citation-pill-tooltip-doc">
-                                {tooltipDoc}
-                              </span>
-                              <hr className="citation-pill-tooltip-rule" />
-                              <span className="citation-pill-tooltip-match">
-                                {tooltipMatchLabel}
-                              </span>
-                            </span>
-                          ) : null}
-                        </Button>
-                      );
-                    })}
+                            ) : null}
+                          </Button>
+                        );
+                      })}
+                    </span>
                   </span>
 
                   {sentenceStatusNote(sentence) ? (
