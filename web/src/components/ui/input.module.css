@@ -1,0 +1,37 @@
+.root {
+  height: 2rem;
+  width: 100%;
+  min-width: 0;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--input);
+  background: transparent;
+  padding: 0.25rem 0.625rem;
+  color: var(--foreground);
+  font-size: 0.875rem;
+  outline: none;
+  transition:
+    border-color 180ms ease,
+    box-shadow 180ms ease,
+    background-color 180ms ease;
+}
+
+.root::placeholder {
+  color: var(--muted-foreground);
+}
+
+.root:focus-visible {
+  border-color: var(--ring);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring) 55%, transparent);
+}
+
+.root:disabled {
+  cursor: not-allowed;
+  pointer-events: none;
+  opacity: 0.5;
+  background: color-mix(in srgb, var(--input) 50%, transparent);
+}
+
+.root[aria-invalid="true"] {
+  border-color: var(--destructive);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--destructive) 20%, transparent);
+}

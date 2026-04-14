@@ -1,0 +1,78 @@
+.root {
+  display: inline-flex;
+  width: fit-content;
+  min-height: 1.25rem;
+  align-items: center;
+  justify-content: center;
+  gap: 0.25rem;
+  overflow: hidden;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  padding: 0.125rem 0.5rem;
+  font-size: 0.75rem;
+  font-weight: 500;
+  white-space: nowrap;
+  transition:
+    background-color 180ms ease,
+    border-color 180ms ease,
+    color 180ms ease,
+    box-shadow 180ms ease;
+}
+
+.root > svg {
+  pointer-events: none;
+  width: 0.75rem;
+  height: 0.75rem;
+}
+
+.root:focus-visible {
+  border-color: var(--ring);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring) 55%, transparent);
+}
+
+.root[aria-invalid="true"] {
+  border-color: var(--destructive);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--destructive) 20%, transparent);
+}
+
+.variantDefault {
+  background: var(--primary);
+  color: var(--primary-foreground);
+}
+
+.variantSecondary {
+  background: var(--secondary);
+  color: var(--secondary-foreground);
+}
+
+.variantDestructive {
+  background: color-mix(in srgb, var(--destructive) 14%, transparent);
+  color: var(--destructive);
+}
+
+.variantOutline {
+  border-color: var(--border);
+  color: var(--foreground);
+  background: transparent;
+}
+
+.variantGhost {
+  background: transparent;
+  color: var(--foreground);
+}
+
+.variantGhost:hover {
+  background: var(--muted);
+  color: var(--muted-foreground);
+}
+
+.variantLink {
+  background: transparent;
+  color: var(--primary);
+  text-decoration: none;
+  text-underline-offset: 0.25em;
+}
+
+.variantLink:hover {
+  text-decoration: underline;
+}

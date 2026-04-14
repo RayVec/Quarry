@@ -297,17 +297,28 @@ export function ResponseReview({
       return;
     }
 
-    const startSentenceCopy = _closestSentenceCopy(range.startContainer);
-    const endSentenceCopy = _closestSentenceCopy(range.endContainer);
-    if (!startSentenceCopy || !endSentenceCopy) {
+    const copies = Array.from(
+      container.querySelectorAll<HTMLElement>(SENTENCE_COPY_SELECTOR)
+    );
+    const intersectedCopies = copies.filter((copy) =>
+      range.intersectsNode(copy)
+    );
+
+    if (intersectedCopies.length === 0) {
       setSelectionDraft(null);
       return;
     }
 
+    const startSentenceCopy = intersectedCopies[0];
+    const endSentenceCopy = intersectedCopies[intersectedCopies.length - 1];
+
     const startSentenceIndex = Number(
       startSentenceCopy.dataset.sentenceCopyIndex,
     );
-    const endSentenceIndex = Number(endSentenceCopy.dataset.sentenceCopyIndex);
+    const endSentenceIndex = Number(
+      endSentenceCopy.dataset.sentenceCopyIndex,
+    );
+
     if (
       !Number.isInteger(startSentenceIndex) ||
       !Number.isInteger(endSentenceIndex)
@@ -323,19 +334,24 @@ export function ResponseReview({
       return;
     }
 
-    const localStart = _rangePointOffsetInSentence(
-      startSentenceCopy,
-      range.startContainer,
-      range.startOffset,
-    );
-    const localEnd = _rangePointOffsetInSentence(
-      endSentenceCopy,
-      range.endContainer,
-      range.endOffset,
-    );
-    if (localStart === null || localEnd === null) {
-      setSelectionDraft(null);
-      return;
+    let localStart = 0;
+    if (startSentenceCopy.contains(range.startContainer)) {
+      localStart =
+        _rangePointOffsetInSentence(
+          startSentenceCopy,
+          range.startContainer,
+          range.startOffset,
+        ) ?? 0;
+    }
+
+    let localEnd = endSentenceCopy.textContent?.length ?? 0;
+    if (endSentenceCopy.contains(range.endContainer)) {
+      localEnd =
+        _rangePointOffsetInSentence(
+          endSentenceCopy,
+          range.endContainer,
+          range.endOffset,
+        ) ?? localEnd;
     }
 
     const start = Math.max(0, startSentenceRange.start + localStart);
@@ -455,7 +471,7 @@ export function ResponseReview({
         ref={contentRef}
       >
         {!paragraphs.length ? (
-          <Alert className="response-empty-state border-border/70 bg-card/90">
+          <Alert className="response-empty-state">
             <AlertTitle className="tiny-label">
               No verified answer to show
             </AlertTitle>
@@ -676,16 +692,10 @@ export function ResponseReview({
                             {displayCitationMap.get(reference.citation_id) ??
                               reference.citation_id}
                             {feedback === "like" && (
-                              <ThumbsUp
-                                aria-label="Liked"
-                                className="ml-1 inline"
-                              />
+                              <ThumbsUp aria-label="Liked" className="citation-feedback-icon" />
                             )}
                             {feedback === "dislike" && (
-                              <ThumbsDown
-                                aria-label="Disliked"
-                                className="ml-1 inline"
-                              />
+                              <ThumbsDown aria-label="Disliked" className="citation-feedback-icon" />
                             )}
                             {!hasCommentOverlay ? (
                               <span
@@ -713,7 +723,7 @@ export function ResponseReview({
 
                   {sentenceStatusNote(sentence) ? (
                     <Alert
-                      className="sentence-status-note mt-3 border-warning-medium/70 bg-[var(--warning-surface)] text-[var(--warning-ink)]"
+                      className="sentence-status-note sentence-status-note--warning"
                       data-testid={`sentence-note-${sentence.sentence_index}`}
                     >
                       <AlertDescription>
@@ -787,7 +797,7 @@ export function ResponseReview({
 
         {popupState && popupPosition ? (
           <Card
-            className="selection-comment-card gap-0 border-border/70 bg-card/98 py-0"
+            className="selection-comment-card"
             data-testid="selection-comment-card"
             ref={popupRef}
             style={{
@@ -811,7 +821,7 @@ export function ResponseReview({
                 />
                 <div className="selection-comment-actions">
                   <button
-                    className="text-button selection-comment-cancel"
+                    className="selection-comment-cancel text-button"
                     data-testid="cancel-selection-comment"
                     onClick={dismissPopup}
                     type="button"

@@ -263,6 +263,7 @@ The shared system prompt establishes rules that are true across all tasks:
 - factual statements must be grounded in supplied text
 - the answer should be written in the user's language unless another language is requested
 - prose should be clear, natural, concise, and logically ordered
+- the user’s question should be answered directly rather than drifting into document narration unless provenance is itself important
 - source formatting such as bullets, checklists, field labels, table fragments, and OCR noise should not be imitated
 - quotes must be copied verbatim
 
@@ -369,6 +370,15 @@ The current prompt is intentionally context-first:
 11. mode-specific instruction
 
 This ordering is meant to help the model understand what it is answering before it sees output-format constraints.
+
+Current writing guidance in the prompt emphasizes:
+
+- start with the direct answer or most important finding
+- answer in the form the user asked for; for example, “what should I read/focus on/prioritize?” should be answered as guidance, not as a tour of the documents
+- merge overlapping evidence instead of repeating the same point in slightly different words
+- use additional passages only when they add a distinct detail or contrast
+- avoid provenance filler such as “the document includes” or “the section states” unless source provenance is itself important
+- prefer concise category-level prose over long catalogues of closely related items
 
 ### 12.2 Paragraph markers and sentence tags
 

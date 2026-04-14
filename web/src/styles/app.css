@@ -1,10 +1,5 @@
 @import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Manrope:wght@500;600;700;800&display=swap");
 @import "@fontsource-variable/geist";
-@import "tailwindcss";
-@import "tw-animate-css";
-@import "shadcn/tailwind.css";
-
-@custom-variant dark (&:is(.dark *));
 
 :root {
   color-scheme: light;
@@ -80,6 +75,8 @@
   --sidebar-accent-foreground: #10294a;
   --sidebar-border: rgba(71, 85, 105, 0.18);
   --sidebar-ring: rgba(27, 54, 93, 0.28);
+  --font-sans: "Geist Variable", sans-serif;
+  --font-heading: var(--font-sans);
 }
 
 .app-shell * {
@@ -263,6 +260,12 @@
   background: var(--primary-container);
 }
 
+.sidebar-primary-action--new-search {
+  height: 2.75rem;
+  justify-content: flex-start;
+  font-size: 0.875rem;
+}
+
 .primary-button:disabled,
 .sidebar-primary-action:disabled {
   background: rgba(71, 85, 105, 0.16);
@@ -396,6 +399,11 @@
   width: 100%;
   min-width: 0;
   cursor: pointer;
+}
+
+.recent-research-open--multiline {
+  height: auto;
+  white-space: normal;
 }
 
 .recent-research-delete {
@@ -635,6 +643,10 @@
   align-self: stretch;
 }
 
+.composer-submit--large {
+  height: 2.75rem;
+}
+
 .thread-message {
   animation: rise-in 320ms ease both;
 }
@@ -648,6 +660,11 @@
   border-radius: var(--radius-lg);
   position: relative;
   color: var(--on-surface);
+}
+
+.thread-message-user-card {
+  border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  background: color-mix(in srgb, var(--card) 90%, transparent);
 }
 
 .thread-message.user-message::before {
@@ -712,6 +729,19 @@
   color: var(--error-ink);
   padding: 0.9rem 1rem;
   border-radius: var(--radius-md);
+  border: 1px solid color-mix(in srgb, var(--warning-medium) 70%, transparent);
+}
+
+.assistant-message-content {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.user-query-card-content {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
 }
 
 .response-review,
@@ -745,6 +775,8 @@
   border-radius: var(--radius-lg);
   max-width: none;
   line-height: 1.7;
+  border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  background: color-mix(in srgb, var(--card) 90%, transparent);
 }
 
 .response-sentence {
@@ -1081,6 +1113,11 @@
     inset 0 0 0 1px var(--surface-stroke),
     0 18px 40px rgba(15, 23, 42, 0.2);
   z-index: 90;
+  gap: 0;
+  border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  background: color-mix(in srgb, var(--card) 98%, transparent);
+  padding-top: 0;
+  padding-bottom: 0;
 }
 
 .selection-comment-compose,
@@ -1130,6 +1167,18 @@
   line-height: 1.7;
 }
 
+.sentence-status-note--warning {
+  margin-top: 0.75rem;
+  border: 1px solid color-mix(in srgb, var(--warning-medium) 70%, transparent);
+  background: var(--warning-surface);
+  color: var(--warning-ink);
+}
+
+.citation-feedback-icon {
+  margin-left: 0.25rem;
+  display: inline;
+}
+
 .citation-pill {
   display: inline-flex;
   align-items: center;
@@ -1150,6 +1199,12 @@
     background-color 180ms ease,
     transform 180ms ease,
     box-shadow 180ms ease;
+}
+
+/* Beat `.app-shell button { font: inherit }` so pill typography matches design (inherit was pulling Card `text-sm` / browser min-size). */
+.app-shell button.citation-pill {
+  font-size: 0.76rem;
+  font-weight: 700;
 }
 
 .citation-pill svg {
@@ -1331,6 +1386,65 @@
   overflow: hidden;
 }
 
+.diagnostics-drawer--sized {
+  width: 100%;
+  height: 100dvh;
+  overflow: hidden;
+  border-left: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  background: color-mix(in srgb, var(--background) 98%, transparent);
+}
+
+@media (min-width: 640px) {
+  .diagnostics-drawer--sized {
+    width: 54rem;
+    max-width: 54rem;
+  }
+}
+
+.citation-drawer--sized {
+  width: 100%;
+  height: 100dvh;
+  overflow: hidden;
+  border-left: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  background: color-mix(in srgb, var(--background) 98%, transparent);
+  padding-inline: 0;
+}
+
+@media (min-width: 640px) {
+  .citation-drawer--sized {
+    width: 40rem;
+    max-width: 40rem;
+  }
+}
+
+.citation-drawer-header,
+.workspace-drawer-header {
+  gap: 0.75rem;
+  padding: 2rem 2rem 1.5rem;
+}
+
+.citation-drawer-title {
+  font-family: "Manrope", "Inter", sans-serif;
+  font-size: 1.875rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--foreground);
+}
+
+.workspace-drawer-title {
+  font-family: "Manrope", "Inter", sans-serif;
+  font-size: 2.25rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--foreground);
+}
+
+@media (min-width: 640px) {
+  .workspace-drawer-title {
+    font-size: 3rem;
+  }
+}
+
 .drawer-header h2 {
   margin-top: 0.45rem;
   font-size: 2rem;
@@ -1339,6 +1453,68 @@
 
 .drawer-stack {
   margin-top: 1.2rem;
+}
+
+.citation-drawer-stack,
+.workspace-drawer-content {
+  min-height: 0;
+  flex: 1;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 0 2rem 2rem;
+}
+
+.citation-drawer-stack {
+  margin-top: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.workspace-drawer-tabs {
+  gap: 1.5rem;
+}
+
+.workspace-drawer-tabs-list {
+  width: fit-content;
+}
+
+.workspace-drawer-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.surface-card {
+  border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  background: color-mix(in srgb, var(--card) 95%, transparent);
+}
+
+.provider-select-trigger {
+  width: 100%;
+  height: 3.5rem;
+}
+
+.stack-gap-4 {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.stack-gap-3 {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.stack-gap-2 {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.full-width {
+  width: 100%;
 }
 
 .workspace-drawer .drawer-stack {
@@ -1430,6 +1606,10 @@
   -webkit-text-security: disc;
 }
 
+.api-key-input--with-clear {
+  padding-right: 2.5rem;
+}
+
 .api-key-clear {
   position: absolute;
   top: 50%;
@@ -1492,7 +1672,21 @@
 }
 
 .workspace-drawer-actions {
+  display: flex;
+  width: 100%;
+  flex-direction: column;
+  gap: 0.75rem;
   align-items: stretch;
+}
+
+.workspace-validation-message {
+  font-size: 0.875rem;
+  color: var(--warning-accent);
+}
+
+.workspace-save-button {
+  height: 3rem;
+  width: 100%;
 }
 
 .workspace-save-feedback {
@@ -1500,6 +1694,14 @@
   gap: 0.22rem;
   max-width: 100%;
   color: var(--on-tertiary-fixed-variant);
+}
+
+.workspace-save-notice-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.875rem;
+  color: #047857;
 }
 
 .workspace-save-feedback svg {
@@ -1515,6 +1717,163 @@
 
 .spin-icon {
   animation: spin 0.9s linear infinite;
+}
+
+.diagnostics-grid {
+  display: grid;
+  gap: 0.75rem;
+}
+
+@media (min-width: 640px) {
+  .diagnostics-grid--two-column {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .diagnostics-grid--three-column {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+.settings-field-label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.settings-field-label-text {
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--foreground);
+}
+
+.settings-field-label-description {
+  font-size: 0.875rem;
+  color: var(--muted-foreground);
+}
+
+.diagnostics-datum {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  border-radius: var(--radius-md);
+  border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  background: color-mix(in srgb, var(--background) 70%, transparent);
+  padding: 0.75rem;
+}
+
+.diagnostics-datum-label {
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.22em;
+  color: var(--muted-foreground);
+}
+
+.diagnostics-datum-value {
+  font-size: 0.875rem;
+  color: var(--foreground);
+}
+
+/* Citation drawer meta cards: two stacked cards on the left and one tall card on the right. */
+.citation-drawer-meta-layout {
+  display: grid;
+  gap: 1rem;
+  width: 100%;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.citation-drawer-info-card {
+  min-width: 0;
+}
+
+.citation-drawer-card {
+  gap: 0.75rem;
+  padding-top: 1rem;
+  padding-bottom: 0.75rem;
+}
+
+.citation-drawer-card--surface {
+  border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  background: color-mix(in srgb, var(--card) 95%, transparent);
+}
+
+.citation-drawer-card--overflow-visible {
+  overflow: visible;
+}
+
+.citation-feedback-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.citation-alternatives-card {
+  border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  background: color-mix(in srgb, var(--muted) 40%, transparent);
+}
+
+.citation-alternatives-load-button {
+  width: 100%;
+}
+
+.citation-candidate-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.citation-candidate-item-card {
+  border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  background: color-mix(in srgb, var(--card) 95%, transparent);
+}
+
+.citation-candidate-content {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.citation-candidate-meta {
+  font-size: 0.875rem;
+  color: var(--muted-foreground);
+}
+
+.citation-candidate-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.citation-drawer-match-card {
+  align-self: start;
+}
+
+.citation-drawer-match-card-content {
+  display: grid;
+  align-content: start;
+}
+
+@media (min-width: 768px) {
+  .citation-drawer-meta-layout {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-areas:
+      "document match"
+      "page match";
+    align-items: start;
+  }
+}
+
+.citation-drawer-info-card--document {
+  grid-area: document;
+}
+
+.citation-drawer-info-card--page {
+  grid-area: page;
+}
+
+.citation-drawer-info-card--match-quality {
+  grid-area: match;
 }
 
 .citation-drawer-doc-page-row {
@@ -1928,49 +2287,6 @@
     max-width: none;
     border-radius: 0.9rem 0.9rem 0 0;
   }
-}
-
-@theme inline {
-  --font-heading: var(--font-sans);
-  --font-sans: 'Geist Variable', sans-serif;
-  --color-sidebar-ring: var(--sidebar-ring);
-  --color-sidebar-border: var(--sidebar-border);
-  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
-  --color-sidebar-accent: var(--sidebar-accent);
-  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
-  --color-sidebar-primary: var(--sidebar-primary);
-  --color-sidebar-foreground: var(--sidebar-foreground);
-  --color-sidebar: var(--sidebar);
-  --color-chart-5: var(--chart-5);
-  --color-chart-4: var(--chart-4);
-  --color-chart-3: var(--chart-3);
-  --color-chart-2: var(--chart-2);
-  --color-chart-1: var(--chart-1);
-  --color-ring: var(--ring);
-  --color-input: var(--input);
-  --color-border: var(--border);
-  --color-destructive: var(--destructive);
-  --color-accent-foreground: var(--accent-foreground);
-  --color-accent: var(--accent);
-  --color-muted-foreground: var(--muted-foreground);
-  --color-muted: var(--muted);
-  --color-secondary-foreground: var(--secondary-foreground);
-  --color-secondary: var(--secondary);
-  --color-primary-foreground: var(--primary-foreground);
-  --color-primary: var(--primary);
-  --color-popover-foreground: var(--popover-foreground);
-  --color-popover: var(--popover);
-  --color-card-foreground: var(--card-foreground);
-  --color-card: var(--card);
-  --color-foreground: var(--foreground);
-  --color-background: var(--background);
-  --radius-sm: calc(var(--radius) * 0.6);
-  --radius-md: calc(var(--radius) * 0.8);
-  --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) * 1.4);
-  --radius-2xl: calc(var(--radius) * 1.8);
-  --radius-3xl: calc(var(--radius) * 2.2);
-  --radius-4xl: calc(var(--radius) * 2.6);
 }
 
 .dark {

@@ -104,7 +104,7 @@ export function QueryComposer({
         />
         <div className="composer-submit-row">
           <Button
-            className="composer-submit h-11"
+            className="composer-submit composer-submit--large"
             data-testid="run-query"
             disabled={!canSubmit}
             type="submit"

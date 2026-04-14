@@ -64,10 +64,10 @@ export function ConversationMessage({
         </div>
       </CardHeader>
 
-      <CardContent className="flex flex-col gap-4">
+      <CardContent className="assistant-message-content">
         {messageLead(session) ? <p className="assistant-lead">{messageLead(session)}</p> : null}
         {removedSentenceBanner(session) ? (
-          <Alert className="response-warning-banner border-warning-medium/70 bg-[var(--warning-surface)] text-[var(--warning-ink)]">
+          <Alert className="response-warning-banner">
             <AlertDescription>{removedSentenceBanner(session)}</AlertDescription>
           </Alert>
         ) : null}

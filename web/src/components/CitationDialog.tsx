@@ -301,22 +301,22 @@ export function CitationDialog({
   return (
     <Sheet open onOpenChange={(nextOpen) => !nextOpen && onClose()}>
       <SheetContent
-        className="citation-drawer h-dvh w-full overflow-hidden border-l border-border/70 bg-background/98 px-0 sm:w-[40rem] sm:max-w-[40rem]"
+        className="citation-drawer citation-drawer--sized"
         data-testid="citation-dialog"
         side="right"
       >
-        <SheetHeader className="gap-3 px-8 pt-8 pb-6">
+        <SheetHeader className="citation-drawer-header">
           <span className="eyebrow">Citation {displayCitationId}</span>
-          <SheetTitle className="text-3xl font-semibold tracking-tight text-foreground">
+          <SheetTitle className="citation-drawer-title">
             Review citation support
           </SheetTitle>
         </SheetHeader>
 
         <div
           ref={drawerStackRef}
-          className="drawer-stack flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto overscroll-contain px-8 pb-8"
+          className="drawer-stack citation-drawer-stack"
         >
-          <Card className="border-border/70 bg-card/95 overflow-visible">
+          <Card className="citation-drawer-card citation-drawer-card--surface citation-drawer-card--overflow-visible" size="sm">
             <CardHeader>
               <CardTitle className="tiny-label">Reference quote in context</CardTitle>
             </CardHeader>
@@ -329,36 +329,34 @@ export function CitationDialog({
             </CardContent>
           </Card>
 
-          <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)]">
-            <div className="flex flex-col gap-4">
-              <Card className="border-border/70 bg-card/95">
-                <CardHeader>
-                  <CardTitle className="tiny-label">Document</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <p className="citation-drawer-info-value">{citation.document_title}</p>
-                </CardContent>
-              </Card>
+          <div className="citation-drawer-meta-layout">
+            <Card className="citation-drawer-card citation-drawer-card--surface citation-drawer-info-card citation-drawer-info-card--document" size="sm">
+              <CardHeader>
+                <CardTitle className="tiny-label">Document</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="citation-drawer-info-value">{citation.document_title}</p>
+              </CardContent>
+            </Card>
 
-              <Card className="border-border/70 bg-card/95">
-                <CardHeader>
-                  <CardTitle className="tiny-label">Page</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <p className="citation-drawer-info-value">
-                    {citation.page_end != null && citation.page_end !== citation.page_number
-                      ? `${citation.page_number}-${citation.page_end}`
-                      : `${citation.page_number}`}
-                  </p>
-                </CardContent>
-              </Card>
-            </div>
+            <Card className="citation-drawer-card citation-drawer-card--surface citation-drawer-info-card citation-drawer-info-card--page" size="sm">
+              <CardHeader>
+                <CardTitle className="tiny-label">Page</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="citation-drawer-info-value">
+                  {citation.page_end != null && citation.page_end !== citation.page_number
+                    ? `${citation.page_number}-${citation.page_end}`
+                    : `${citation.page_number}`}
+                </p>
+              </CardContent>
+            </Card>
 
-            <Card className="border-border/70 bg-card/95">
+            <Card className="citation-drawer-card citation-drawer-card--surface citation-drawer-info-card citation-drawer-info-card--match-quality citation-drawer-match-card" size="sm">
               <CardHeader>
                 <CardTitle className="tiny-label">Match quality</CardTitle>
               </CardHeader>
-              <CardContent>
+              <CardContent className="citation-drawer-match-card-content">
                 <div
                   className={`retrieval-strength retrieval-strength--${matchQuality.level}`}
                 >
@@ -374,11 +372,11 @@ export function CitationDialog({
             </Card>
           </div>
 
-          <Card className="border-border/70 bg-card/95">
+          <Card className="citation-drawer-card citation-drawer-card--surface" size="sm">
             <CardHeader>
               <CardTitle className="tiny-label">Citation feedback</CardTitle>
             </CardHeader>
-            <CardContent className="flex flex-wrap gap-3">
+            <CardContent className="citation-feedback-actions">
               <Button
                 data-testid="like-citation"
                 disabled={readOnly || loadingAlternatives}
@@ -403,7 +401,7 @@ export function CitationDialog({
           </Card>
 
           {currentFeedback === "dislike" && showAlternativesSection ? (
-            <Card className="border-border/70 bg-muted/40">
+            <Card className="citation-alternatives-card">
               <CardHeader>
                 <CardTitle className="tiny-label">
                   You can select similar passages to replace
@@ -412,7 +410,7 @@ export function CitationDialog({
               <CardContent>
                 {alternatives.length === 0 ? (
                   <Button
-                    className="w-full"
+                    className="citation-alternatives-load-button"
                     data-testid="load-alternatives"
                     disabled={readOnly || loadingAlternatives}
                     onClick={handleLoadAlternatives}
@@ -421,13 +419,13 @@ export function CitationDialog({
                     {loadingAlternatives ? "Searching..." : "Show me similar passages"}
                   </Button>
                 ) : (
-                  <div className="candidate-list flex flex-col gap-4">
+                  <div className="candidate-list citation-candidate-list">
                     {alternatives.map((alt) => {
                       const isExpanded = expandedAlternatives.has(alt.citation_id);
                       return (
-                        <Card className="candidate-item border-border/70 bg-card/95" key={alt.citation_id}>
-                          <CardContent className="flex flex-col gap-3">
-                            <div className="text-sm text-muted-foreground">
+                        <Card className="candidate-item citation-candidate-item-card" key={alt.citation_id}>
+                          <CardContent className="citation-candidate-content">
+                            <div className="citation-candidate-meta">
                               <strong>{alt.document_title}</strong>
                               {alt.section_heading ? <span> • {alt.section_heading}</span> : null}
                               <span> (Page {alt.page_number})</span>
@@ -444,7 +442,7 @@ export function CitationDialog({
                               {alt.text}
                             </p>
                             <Separator />
-                            <div className="flex flex-wrap gap-2">
+                            <div className="citation-candidate-actions">
                               <Button
                                 className="citation-alt-action-button"
                                 data-testid={`expand-alternative-${alt.citation_id}`}

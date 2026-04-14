@@ -197,11 +197,11 @@ function SettingsField({
   children: React.ReactNode;
 }) {
   return (
-    <label className="flex flex-col gap-2">
-      <span className="text-sm font-medium text-foreground">{label}</span>
+    <label className="settings-field-label">
+      <span className="settings-field-label-text">{label}</span>
       {children}
       {description ? (
-        <span className="text-sm text-muted-foreground">{description}</span>
+        <span className="settings-field-label-description">{description}</span>
       ) : null}
     </label>
   );
@@ -217,11 +217,11 @@ function DiagnosticsDatum({
   testId?: string;
 }) {
   return (
-    <div className="flex flex-col gap-1 rounded-lg border border-border/70 bg-background/70 p-3">
-      <span className="text-[0.7rem] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
+    <div className="diagnostics-datum">
+      <span className="diagnostics-datum-label">
         {label}
       </span>
-      <span className="text-sm text-foreground" data-testid={testId}>
+      <span className="diagnostics-datum-value" data-testid={testId}>
         {value}
       </span>
     </div>
@@ -293,13 +293,13 @@ export function DiagnosticsDrawer({
   return (
     <Sheet open={open} onOpenChange={(nextOpen) => !nextOpen && onClose()}>
       <SheetContent
-        className="diagnostics-drawer workspace-drawer h-dvh w-full overflow-hidden border-l border-border/70 bg-background/98 px-0 sm:w-[54rem] sm:max-w-[54rem]"
+        className="diagnostics-drawer workspace-drawer diagnostics-drawer--sized"
         data-testid="diagnostics-drawer"
         side="right"
       >
-        <SheetHeader className="gap-3 px-8 pt-8 pb-6">
+        <SheetHeader className="workspace-drawer-header">
           <SheetTitle asChild>
-            <h3 className="font-heading text-4xl font-semibold tracking-tight text-foreground sm:text-5xl">
+            <h3 className="workspace-drawer-title">
               Settings
             </h3>
           </SheetTitle>
@@ -308,21 +308,21 @@ export function DiagnosticsDrawer({
           </SheetDescription>
         </SheetHeader>
 
-        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-8 pb-8">
+        <div className="workspace-drawer-content">
           <Tabs
-            className="gap-6"
+            className="workspace-drawer-tabs"
             value={activeTab}
             onValueChange={(value) => onTabChange(value as DrawerTab)}
           >
-            <TabsList className="w-fit">
+            <TabsList className="workspace-drawer-tabs-list">
               <TabsTrigger value="settings">Provider</TabsTrigger>
               <TabsTrigger value="diagnostics">Diagnostics</TabsTrigger>
             </TabsList>
 
-            <TabsContent value="settings" className="flex flex-col gap-5">
+            <TabsContent value="settings" className="workspace-drawer-panel">
               {settingsLoading ? (
                 <Alert>
-                  <Loader2 className="animate-spin" />
+                  <Loader2 className="spin-icon" />
                   <AlertTitle>Loading</AlertTitle>
                   <AlertDescription>
                     Loading saved provider settings…
@@ -357,7 +357,7 @@ export function DiagnosticsDrawer({
                 </Alert>
               ) : null}
 
-              <Card className="border-border/70 bg-card/95">
+              <Card className="surface-card">
                 <CardHeader>
                   <CardTitle className="tiny-label">Provider</CardTitle>
                 </CardHeader>
@@ -375,7 +375,7 @@ export function DiagnosticsDrawer({
                       )
                     }
                   >
-                    <SelectTrigger className="h-14 w-full" aria-label="Provider">
+                    <SelectTrigger className="provider-select-trigger" aria-label="Provider">
                       <SelectValue placeholder="Choose provider" />
                     </SelectTrigger>
                     <SelectContent>
@@ -395,7 +395,7 @@ export function DiagnosticsDrawer({
               </Card>
 
               {selectedProvider?.requires_base_url ? (
-                <Card className="border-border/70 bg-card/95">
+                <Card className="surface-card">
                   <CardHeader>
                     <CardTitle className="tiny-label">Connection</CardTitle>
                   </CardHeader>
@@ -418,11 +418,11 @@ export function DiagnosticsDrawer({
                 </Card>
               ) : null}
 
-              <Card className="border-border/70 bg-card/95">
+              <Card className="surface-card">
                 <CardHeader>
                   <CardTitle className="tiny-label">Model</CardTitle>
                 </CardHeader>
-                <CardContent className="flex flex-col gap-4">
+                <CardContent className="stack-gap-4">
                   <Select
                     value={draft.selectedModelId}
                     onValueChange={(value) =>
@@ -436,7 +436,7 @@ export function DiagnosticsDrawer({
                   >
                     <SelectTrigger
                       aria-label={selectedProvider?.model_label ?? "Model"}
-                      className="w-full"
+                      className="full-width"
                     >
                       <SelectValue placeholder="Choose model" />
                     </SelectTrigger>
@@ -479,19 +479,19 @@ export function DiagnosticsDrawer({
                 </CardContent>
               </Card>
 
-              <Card className="border-border/70 bg-card/95">
+              <Card className="surface-card">
                 <CardHeader>
                   <CardTitle className="tiny-label">API key</CardTitle>
                 </CardHeader>
-                <CardContent className="flex flex-col gap-4">
-                  <div className="flex flex-col gap-2">
+                <CardContent className="stack-gap-4">
+                  <div className="stack-gap-2">
                     <div className="api-key-input-shell">
                       <Input
                         aria-label="API key"
                         autoCapitalize="off"
                         autoComplete="off"
                         autoCorrect="off"
-                        className={`api-key-input ${canClearSavedApiKey ? "pr-10" : ""}`.trim()}
+                        className={`api-key-input ${canClearSavedApiKey ? "api-key-input--with-clear" : ""}`.trim()}
                         inputMode="text"
                         name="quarry-api-key"
                         placeholder={apiKeyPlaceholder}
@@ -551,15 +551,15 @@ export function DiagnosticsDrawer({
                 </CardContent>
               </Card>
 
-              <div className="workspace-drawer-actions flex w-full flex-col gap-3">
+              <div className="workspace-drawer-actions">
                 {formValidationMessage ? (
-                  <p className="text-sm text-[var(--warning-accent)]">
+                  <p className="workspace-validation-message">
                     {formValidationMessage}
                   </p>
                 ) : null}
 
                 <Button
-                  className="h-12 w-full"
+                  className="workspace-save-button"
                   disabled={!canSave}
                   onClick={() =>
                     onSaveSettings({
@@ -592,7 +592,7 @@ export function DiagnosticsDrawer({
                   {settingsSaving ? (
                     <>
                       <Loader2
-                        className="animate-spin"
+                        className="spin-icon"
                         data-icon="inline-start"
                       />
                       Saving…
@@ -603,12 +603,12 @@ export function DiagnosticsDrawer({
                 </Button>
 
                 {settingsSaveNotice ? (
-                  <div className="workspace-save-feedback flex flex-col gap-1">
-                    <p className="flex items-center gap-2 text-sm text-emerald-700">
+                  <div className="workspace-save-feedback">
+                    <p className="workspace-save-notice-row">
                       <CheckCircle2 />
                       <span>{settingsSaveNotice}</span>
                     </p>
-                    <p className="workspace-save-path text-sm text-muted-foreground">
+                    <p className="workspace-save-path">
                       Saved to{" "}
                       <code>{settings?.config_path ?? "config.toml"}</code>.
                       Future queries will use the updated provider settings.
@@ -618,14 +618,14 @@ export function DiagnosticsDrawer({
               </div>
             </TabsContent>
 
-            <TabsContent value="diagnostics" className="flex flex-col gap-5">
+            <TabsContent value="diagnostics" className="workspace-drawer-panel">
               {session ? (
                 <>
-                  <Card className="border-border/70 bg-card/95">
+                  <Card className="surface-card">
                     <CardHeader>
                       <CardTitle className="tiny-label">Session</CardTitle>
                     </CardHeader>
-                    <CardContent className="grid gap-3 sm:grid-cols-2">
+                    <CardContent className="diagnostics-grid diagnostics-grid--two-column">
                       <DiagnosticsDatum
                         label="Session"
                         testId="status-mode"
@@ -684,13 +684,13 @@ export function DiagnosticsDrawer({
                   </Card>
 
                   {(session.ui_messages?.length ?? 0) ? (
-                    <Card className="border-border/70 bg-card/95">
+                    <Card className="surface-card">
                       <CardHeader>
                         <CardTitle className="tiny-label">
                           Pipeline messages
                         </CardTitle>
                       </CardHeader>
-                      <CardContent className="flex flex-col gap-3">
+                      <CardContent className="stack-gap-3">
                         {session.ui_messages.map((message) => (
                           <Alert key={`${message.code}-${message.message}`}>
                             <AlertTitle>{message.code}</AlertTitle>
@@ -703,11 +703,11 @@ export function DiagnosticsDrawer({
                     </Card>
                   ) : null}
 
-                  <Card className="border-border/70 bg-card/95">
+                  <Card className="surface-card">
                     <CardHeader>
                       <CardTitle className="tiny-label">Feedback</CardTitle>
                     </CardHeader>
-                    <CardContent className="grid gap-3 sm:grid-cols-3">
+                    <CardContent className="diagnostics-grid diagnostics-grid--three-column">
                       <DiagnosticsDatum
                         label="Comments"
                         value={session.feedback.comments?.length ?? 0}

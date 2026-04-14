@@ -1,0 +1,115 @@
+.tabs {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.tabs[data-orientation="horizontal"] {
+  flex-direction: column;
+}
+
+.tabsList {
+  display: inline-flex;
+  width: fit-content;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-md);
+  padding: 3px;
+  color: var(--muted-foreground);
+}
+
+.tabs[data-orientation="horizontal"] .tabsList {
+  min-height: 2rem;
+}
+
+.tabs[data-orientation="vertical"] .tabsList {
+  height: fit-content;
+  flex-direction: column;
+}
+
+.listVariantDefault {
+  background: var(--muted);
+}
+
+.listVariantLine {
+  gap: 0.25rem;
+  border-radius: 0;
+  background: transparent;
+}
+
+.trigger {
+  position: relative;
+  display: inline-flex;
+  height: calc(100% - 1px);
+  flex: 1 1 0%;
+  align-items: center;
+  justify-content: center;
+  gap: 0.375rem;
+  border-radius: calc(var(--radius-md) - 2px);
+  border: 1px solid transparent;
+  padding: 0.125rem 0.375rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  white-space: nowrap;
+  color: color-mix(in srgb, var(--foreground) 60%, transparent);
+  outline: none;
+  transition:
+    color 180ms ease,
+    background-color 180ms ease,
+    border-color 180ms ease,
+    box-shadow 180ms ease;
+}
+
+.tabs[data-orientation="vertical"] .trigger {
+  width: 100%;
+  justify-content: flex-start;
+}
+
+.trigger:hover {
+  color: var(--foreground);
+}
+
+.trigger:focus-visible {
+  border-color: var(--ring);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring) 55%, transparent);
+}
+
+.trigger:disabled {
+  pointer-events: none;
+  opacity: 0.5;
+}
+
+.trigger[data-state="active"] {
+  background: var(--background);
+  color: var(--foreground);
+  box-shadow: var(--shadow-ambient);
+}
+
+.tabsList[data-variant="line"] .trigger {
+  background: transparent;
+  box-shadow: none;
+}
+
+.tabsList[data-variant="line"] .trigger[data-state="active"]::after {
+  content: "";
+  position: absolute;
+  background: var(--foreground);
+  opacity: 1;
+}
+
+.tabs[data-orientation="horizontal"] .tabsList[data-variant="line"] .trigger[data-state="active"]::after {
+  inset-inline: 0;
+  bottom: -5px;
+  height: 2px;
+}
+
+.tabs[data-orientation="vertical"] .tabsList[data-variant="line"] .trigger[data-state="active"]::after {
+  inset-block: 0;
+  right: -4px;
+  width: 2px;
+}
+
+.content {
+  flex: 1 1 auto;
+  font-size: 0.875rem;
+  outline: none;
+}

@@ -1,0 +1,60 @@
+.root {
+  position: relative;
+  display: grid;
+  width: 100%;
+  gap: 0.25rem;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  padding: 0.5rem 0.625rem;
+  text-align: left;
+  font-size: 0.875rem;
+  background: var(--card);
+  color: var(--card-foreground);
+}
+
+.root:has([data-slot="alert-action"]) {
+  padding-right: 4.5rem;
+}
+
+.root:has(> svg) {
+  grid-template-columns: auto 1fr;
+  column-gap: 0.5rem;
+}
+
+.root > svg {
+  grid-row: span 2;
+  transform: translateY(2px);
+  color: currentColor;
+  width: 1rem;
+  height: 1rem;
+}
+
+.variantDefault {
+  background: var(--card);
+  color: var(--card-foreground);
+}
+
+.variantDestructive {
+  background: var(--card);
+  color: var(--destructive);
+}
+
+.title {
+  font-family: "Manrope", "Inter", sans-serif;
+  font-weight: 600;
+}
+
+.description {
+  color: var(--muted-foreground);
+  font-size: 0.875rem;
+}
+
+.variantDestructive .description {
+  color: color-mix(in srgb, var(--destructive) 90%, black);
+}
+
+.action {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+}

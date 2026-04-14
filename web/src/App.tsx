@@ -1033,7 +1033,7 @@ export default function App() {
           </div>
 
           <Button
-            className="sidebar-primary-action h-11 justify-start text-sm"
+            className="sidebar-primary-action sidebar-primary-action--new-search"
             onClick={handleNewSearch}
           >
             + New Search
@@ -1049,7 +1049,7 @@ export default function App() {
                     key={item.id}
                   >
                     <Button
-                      className="recent-research-open h-auto whitespace-normal"
+                      className="recent-research-open recent-research-open--multiline"
                       onClick={() =>
                         void submitQuery(item.query, { fresh: true })
                       }
@@ -1144,10 +1144,10 @@ export default function App() {
                   {thread.map((entry) =>
                     entry.kind === "user" ? (
                       <Card
-                        className="thread-message user-message border-border/70 bg-card/90"
+                        className="thread-message user-message thread-message-user-card"
                         key={entry.id}
                       >
-                        <CardContent className="flex flex-col gap-2">
+                        <CardContent className="user-query-card-content">
                           <span className="tiny-label">Query</span>
                           <p>{entry.query}</p>
                         </CardContent>

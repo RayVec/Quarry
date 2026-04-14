@@ -41,7 +41,10 @@ def test_generation_prompt_places_context_and_task_before_citation_rules() -> No
     assert "## Citation Format" in prompt
     assert prompt.index("## Source Passages") < prompt.index("## Your Task") < prompt.index("## Source Handling") < prompt.index("## Citation Format")
     assert "Start with the direct answer or most important finding" in prompt
+    assert "Answer the query in the form it asks for." in prompt
     assert "Merge overlapping evidence instead of repeating the same point" in prompt
+    assert "Avoid document-provenance filler such as 'the section states'" in prompt
+    assert "Prefer concise prose over long catalogues." in prompt
     assert "Insert a [PARA] marker when the topic shifts" in prompt
     assert "[PARA] is formatting only" in prompt
     assert "Do not copy bullet points, checklist items, headings, field labels" in prompt
@@ -89,6 +92,7 @@ def test_shared_system_prompt_covers_domain_format_grounding_and_verbatim_rules(
     assert "You are QUARRY, a grounded research assistant for technical" in SHARED_SYSTEM_PROMPT
     assert "Follow the requested output format exactly" in SHARED_SYSTEM_PROMPT
     assert "Write in the user's language unless the prompt explicitly asks" in SHARED_SYSTEM_PROMPT
+    assert "Answer the user's question directly rather than defaulting to" in SHARED_SYSTEM_PROMPT
     assert "Do not imitate source formatting such as bullets, checklists" in SHARED_SYSTEM_PROMPT
     assert "copy the quote exactly as it" in SHARED_SYSTEM_PROMPT
     assert wrapped.startswith(SHARED_SYSTEM_PROMPT)
