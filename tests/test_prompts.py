@@ -41,10 +41,13 @@ def test_generation_prompt_places_context_and_task_before_citation_rules() -> No
     assert "## Citation Format" in prompt
     assert prompt.index("## Source Passages") < prompt.index("## Your Task") < prompt.index("## Source Handling") < prompt.index("## Citation Format")
     assert "Start with the direct answer or most important finding" in prompt
-    assert "Answer the query in the form it asks for." in prompt
-    assert "Merge overlapping evidence instead of repeating the same point" in prompt
-    assert "Avoid document-provenance filler such as 'the section states'" in prompt
-    assert "Prefer concise prose over long catalogues." in prompt
+    assert "coverage checks, not as a required reader-facing outline" in prompt
+    assert "Match the answer shape to the user's request." in prompt
+    assert "Use the facets as internal coverage checks." in prompt
+    assert "Synthesize aggressively: merge overlapping evidence" in prompt
+    assert "user explicitly asks for an exhaustive inventory" in prompt
+    assert "Treat the passages as evidence, not answer prose." in prompt
+    assert "avoid laundry-list structure unless requested" in prompt
     assert "Insert a [PARA] marker when the topic shifts" in prompt
     assert "[PARA] is formatting only" in prompt
     assert "Do not copy bullet points, checklist items, headings, field labels" in prompt

@@ -374,11 +374,13 @@ This ordering is meant to help the model understand what it is answering before 
 Current writing guidance in the prompt emphasizes:
 
 - start with the direct answer or most important finding
-- answer in the form the user asked for; for example, “what should I read/focus on/prioritize?” should be answered as guidance, not as a tour of the documents
-- merge overlapping evidence instead of repeating the same point in slightly different words
-- use additional passages only when they add a distinct detail or contrast
-- avoid provenance filler such as “the document includes” or “the section states” unless source provenance is itself important
-- prefer concise category-level prose over long catalogues of closely related items
+- match the answer shape to the user’s request instead of defaulting to a document tour
+- treat decomposition facets as internal coverage checks rather than a reader-facing outline
+- organize around the smallest clear set of reader-facing themes or steps needed to answer fully
+- synthesize aggressively: merge overlapping evidence, summarize categories, and use representative examples unless the user explicitly asks for an exhaustive inventory
+- use additional passages only when they add a distinct detail, contrast, or qualification
+- avoid provenance-led narration unless source provenance or exact wording is materially important
+- keep the response compact and readable with short grouped paragraphs instead of laundry-list structure
 
 ### 12.2 Paragraph markers and sentence tags
 

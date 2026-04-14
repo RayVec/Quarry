@@ -1144,7 +1144,7 @@ export default function App() {
                   {thread.map((entry) =>
                     entry.kind === "user" ? (
                       <Card
-                        className="thread-message user-message thread-message-user-card"
+                        className="thread-message user-message"
                         key={entry.id}
                       >
                         <CardContent className="user-query-card-content">

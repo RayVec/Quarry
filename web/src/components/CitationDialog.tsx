@@ -29,7 +29,7 @@ import {
 
 const MATCH_QUALITY_ICON_SIZE = 18;
 const MATCH_QUALITY_ICON_STROKE = 2.3;
-const COLLAPSED_QUOTE_HEIGHT_PX = 184;
+
 
 function MatchQualityIcon({ level }: { level: UnifiedMatchLevel }) {
   const common = {
@@ -90,7 +90,15 @@ function CitationQuotePanel({
     if (!el) return;
 
     const measure = () => {
-      setNeedsToggle(el.scrollHeight > COLLAPSED_QUOTE_HEIGHT_PX + 1);
+      const parent = el.parentElement;
+      if (!parent) return;
+
+      const wasExpanded = parent.classList.contains("quoted-passage-viewport--expanded");
+      if (wasExpanded) parent.classList.remove("quoted-passage-viewport--expanded");
+
+      setNeedsToggle(el.scrollHeight > parent.clientHeight + 1);
+
+      if (wasExpanded) parent.classList.add("quoted-passage-viewport--expanded");
     };
 
     measure();
@@ -318,7 +326,7 @@ export function CitationDialog({
         >
           <Card className="citation-drawer-card citation-drawer-card--surface citation-drawer-card--overflow-visible" size="sm">
             <CardHeader>
-              <CardTitle className="tiny-label">Reference quote in context</CardTitle>
+              <CardTitle>Reference quote in context</CardTitle>
             </CardHeader>
             <CardContent>
               <CitationQuotePanel
@@ -332,7 +340,7 @@ export function CitationDialog({
           <div className="citation-drawer-meta-layout">
             <Card className="citation-drawer-card citation-drawer-card--surface citation-drawer-info-card citation-drawer-info-card--document" size="sm">
               <CardHeader>
-                <CardTitle className="tiny-label">Document</CardTitle>
+                <CardTitle>Document</CardTitle>
               </CardHeader>
               <CardContent>
                 <p className="citation-drawer-info-value">{citation.document_title}</p>
@@ -341,7 +349,7 @@ export function CitationDialog({
 
             <Card className="citation-drawer-card citation-drawer-card--surface citation-drawer-info-card citation-drawer-info-card--page" size="sm">
               <CardHeader>
-                <CardTitle className="tiny-label">Page</CardTitle>
+                <CardTitle>Page</CardTitle>
               </CardHeader>
               <CardContent>
                 <p className="citation-drawer-info-value">
@@ -354,7 +362,7 @@ export function CitationDialog({
 
             <Card className="citation-drawer-card citation-drawer-card--surface citation-drawer-info-card citation-drawer-info-card--match-quality citation-drawer-match-card" size="sm">
               <CardHeader>
-                <CardTitle className="tiny-label">Match quality</CardTitle>
+                <CardTitle>Match quality</CardTitle>
               </CardHeader>
               <CardContent className="citation-drawer-match-card-content">
                 <div
@@ -370,40 +378,39 @@ export function CitationDialog({
                 </div>
               </CardContent>
             </Card>
+            <Card className="citation-drawer-card citation-drawer-card--surface citation-drawer-feedback-card" size="sm">
+              <CardHeader>
+                <CardTitle>Citation feedback</CardTitle>
+              </CardHeader>
+              <CardContent className="citation-feedback-actions">
+                <Button
+                  data-testid="like-citation"
+                  disabled={readOnly || loadingAlternatives}
+                  onClick={() => handleFeedback("like")}
+                  type="button"
+                  variant={currentFeedback === "like" ? "default" : "outline"}
+                >
+                  <ThumbsUp data-icon="inline-start" />
+                  {currentFeedback === "like" ? "Liked" : "Like"}
+                </Button>
+                <Button
+                  data-testid="dislike-citation"
+                  disabled={readOnly || loadingAlternatives}
+                  onClick={() => handleFeedback("dislike")}
+                  type="button"
+                  variant={currentFeedback === "dislike" ? "default" : "outline"}
+                >
+                  <ThumbsDown data-icon="inline-start" />
+                  {currentFeedback === "dislike" ? "Disliked" : "Dislike"}
+                </Button>
+              </CardContent>
+            </Card>
           </div>
-
-          <Card className="citation-drawer-card citation-drawer-card--surface" size="sm">
-            <CardHeader>
-              <CardTitle className="tiny-label">Citation feedback</CardTitle>
-            </CardHeader>
-            <CardContent className="citation-feedback-actions">
-              <Button
-                data-testid="like-citation"
-                disabled={readOnly || loadingAlternatives}
-                onClick={() => handleFeedback("like")}
-                type="button"
-                variant={currentFeedback === "like" ? "default" : "outline"}
-              >
-                <ThumbsUp data-icon="inline-start" />
-                {currentFeedback === "like" ? "Liked" : "Like"}
-              </Button>
-              <Button
-                data-testid="dislike-citation"
-                disabled={readOnly || loadingAlternatives}
-                onClick={() => handleFeedback("dislike")}
-                type="button"
-                variant={currentFeedback === "dislike" ? "default" : "outline"}
-              >
-                <ThumbsDown data-icon="inline-start" />
-                {currentFeedback === "dislike" ? "Disliked" : "Dislike"}
-              </Button>
-            </CardContent>
-          </Card>
 
           {currentFeedback === "dislike" && showAlternativesSection ? (
             <Card className="citation-alternatives-card">
               <CardHeader>
-                <CardTitle className="tiny-label">
+                <CardTitle>
                   You can select similar passages to replace
                 </CardTitle>
               </CardHeader>

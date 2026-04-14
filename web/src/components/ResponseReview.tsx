@@ -11,6 +11,12 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import type {
   MatchQuality,
   ParsedSentence,
@@ -464,8 +470,9 @@ export function ResponseReview({
   }, [selectionDraft]);
 
   return (
-    <section className="response-review">
-      <div
+    <TooltipProvider delayDuration={0}>
+      <section className="response-review">
+        <div
         className="response-reading-flow"
         onMouseUp={handleMouseUp}
         ref={contentRef}
@@ -672,35 +679,40 @@ export function ResponseReview({
                           matchQualityTooltipLabel(pillQuality);
 
                         return (
-                          <Button
-                            className={`citation-pill citation-pill--${pillQuality} ${reference.replacement_pending ? "replaced" : ""} ${
-                              hasCommentOverlay
-                                ? "tooltip-suppressed"
-                                : "citation-pill-tooltip-anchor"
-                            }`}
-                            data-testid={`citation-${sentence.sentence_index}-${reference.citation_id}`}
-                            key={`${sentence.sentence_index}-${index}`}
-                            onClick={() =>
-                              onOpenCitation(
-                                sentence,
-                                reference.citation_id!,
-                                reference.reference_quote,
-                              )
-                            }
-                            type="button"
-                          >
-                            {displayCitationMap.get(reference.citation_id) ??
-                              reference.citation_id}
-                            {feedback === "like" && (
-                              <ThumbsUp aria-label="Liked" className="citation-feedback-icon" />
-                            )}
-                            {feedback === "dislike" && (
-                              <ThumbsDown aria-label="Disliked" className="citation-feedback-icon" />
-                            )}
+                          <Tooltip key={`${sentence.sentence_index}-${index}`}>
+                            <TooltipTrigger asChild>
+                              <Button
+                                className={`citation-pill citation-pill--${pillQuality} ${reference.replacement_pending ? "replaced" : ""} ${
+                                  hasCommentOverlay
+                                    ? "tooltip-suppressed"
+                                    : "citation-pill-tooltip-anchor"
+                                }`}
+                                data-testid={`citation-${sentence.sentence_index}-${reference.citation_id}`}
+                                onClick={() =>
+                                  onOpenCitation(
+                                    sentence,
+                                    reference.citation_id!,
+                                    reference.reference_quote,
+                                  )
+                                }
+                                type="button"
+                              >
+                                {displayCitationMap.get(reference.citation_id) ??
+                                  reference.citation_id}
+                                {feedback === "like" && (
+                                  <ThumbsUp aria-label="Liked" className="citation-feedback-icon" />
+                                )}
+                                {feedback === "dislike" && (
+                                  <ThumbsDown aria-label="Disliked" className="citation-feedback-icon" />
+                                )}
+                              </Button>
+                            </TooltipTrigger>
                             {!hasCommentOverlay ? (
-                              <span
+                              <TooltipContent
                                 className="citation-pill-tooltip"
-                                role="tooltip"
+                                side="bottom"
+                                align="start"
+                                sideOffset={6}
                               >
                                 <span className="citation-pill-tooltip-quote">
                                   {tooltipQuote}
@@ -713,9 +725,9 @@ export function ResponseReview({
                                 <span className="citation-pill-tooltip-match">
                                   {tooltipMatchLabel}
                                 </span>
-                              </span>
+                              </TooltipContent>
                             ) : null}
-                          </Button>
+                          </Tooltip>
                         );
                       })}
                     </span>
@@ -832,7 +844,7 @@ export function ResponseReview({
                     data-testid="save-selection-comment"
                     disabled={!draftNote.trim()}
                     type="button"
-                    variant="secondary"
+                    variant="default"
                     onClick={async () => {
                       await onSaveComment({
                         text_selection: selectionDraft.text,
@@ -898,7 +910,7 @@ export function ResponseReview({
                           data-testid={`update-selection-comment-${commentId}`}
                           disabled={!value.trim()}
                           type="button"
-                          variant="secondary"
+                          variant="default"
                           onClick={async () => {
                             await onUpdateComment(commentId, value.trim());
                           }}
@@ -915,5 +927,6 @@ export function ResponseReview({
         ) : null}
       </div>
     </section>
+  </TooltipProvider>
   );
 }

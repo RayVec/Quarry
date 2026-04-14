@@ -1,8 +1,9 @@
 .root {
+  box-sizing: border-box;
   display: flex;
   min-height: 4rem;
   width: 100%;
-  border-radius: var(--radius-md);
+  border-radius: 0.45rem;
   border: 1px solid var(--input);
   background: transparent;
   padding: 0.5rem 0.625rem;

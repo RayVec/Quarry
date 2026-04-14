@@ -359,47 +359,42 @@ export function DiagnosticsDrawer({
 
               <Card className="surface-card">
                 <CardHeader>
-                  <CardTitle className="tiny-label">Provider</CardTitle>
+                  <CardTitle className="tiny-label">Provider configuration</CardTitle>
                 </CardHeader>
-                <CardContent>
-                  <Select
-                    value={draft.providerPreset}
-                    onValueChange={(value) =>
-                      setDraft((current) =>
-                        applyPresetDefaults(
-                          value as HostedProviderPreset,
-                          providers,
-                          settings,
-                          current,
-                        ),
-                      )
-                    }
-                  >
-                    <SelectTrigger className="provider-select-trigger" aria-label="Provider">
-                      <SelectValue placeholder="Choose provider" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectGroup>
-                        {providers.map((provider) => (
-                          <SelectItem
-                            key={provider.preset}
-                            value={provider.preset}
-                          >
-                            {provider.label}
-                          </SelectItem>
-                        ))}
-                      </SelectGroup>
-                    </SelectContent>
-                  </Select>
-                </CardContent>
-              </Card>
+                <CardContent className="stack-gap-4">
+                  <SettingsField label="Provider">
+                    <Select
+                      value={draft.providerPreset}
+                      onValueChange={(value) =>
+                        setDraft((current) =>
+                          applyPresetDefaults(
+                            value as HostedProviderPreset,
+                            providers,
+                            settings,
+                            current,
+                          ),
+                        )
+                      }
+                    >
+                      <SelectTrigger className="provider-select-trigger" aria-label="Provider">
+                        <SelectValue placeholder="Choose provider" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectGroup>
+                          {providers.map((provider) => (
+                            <SelectItem
+                              key={provider.preset}
+                              value={provider.preset}
+                            >
+                              {provider.label}
+                            </SelectItem>
+                          ))}
+                        </SelectGroup>
+                      </SelectContent>
+                    </Select>
+                  </SettingsField>
 
-              {selectedProvider?.requires_base_url ? (
-                <Card className="surface-card">
-                  <CardHeader>
-                    <CardTitle className="tiny-label">Connection</CardTitle>
-                  </CardHeader>
-                  <CardContent>
+                  {selectedProvider?.requires_base_url ? (
                     <SettingsField label={connectionLabel}>
                       <Input
                         placeholder={connectionPlaceholder}
@@ -414,77 +409,65 @@ export function DiagnosticsDrawer({
                         }
                       />
                     </SettingsField>
-                  </CardContent>
-                </Card>
-              ) : null}
+                  ) : null}
 
-              <Card className="surface-card">
-                <CardHeader>
-                  <CardTitle className="tiny-label">Model</CardTitle>
-                </CardHeader>
-                <CardContent className="stack-gap-4">
-                  <Select
-                    value={draft.selectedModelId}
-                    onValueChange={(value) =>
-                      setDraft((current) => ({
-                        ...current,
-                        selectedModelId: value,
-                        customModelId:
-                          value === "custom" ? current.customModelId : "",
-                      }))
-                    }
-                  >
-                    <SelectTrigger
-                      aria-label={selectedProvider?.model_label ?? "Model"}
-                      className="full-width"
-                    >
-                      <SelectValue placeholder="Choose model" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectGroup>
-                        {selectedProvider?.models.map((model) => (
-                          <SelectItem key={model.id} value={model.id}>
-                            {model.label}
-                          </SelectItem>
-                        ))}
-                        {selectedProvider?.supports_custom_model ? (
-                          <SelectItem value="custom">Custom</SelectItem>
-                        ) : null}
-                      </SelectGroup>
-                    </SelectContent>
-                  </Select>
-
-                  {draft.selectedModelId === "custom" ? (
-                    <Input
-                      autoCapitalize="off"
-                      autoComplete="off"
-                      autoCorrect="off"
-                      aria-label="Custom model ID"
-                      name="quarry-model-id"
-                      placeholder={
-                        draft.providerPreset === "openrouter"
-                          ? "provider/model-name"
-                          : "model-id"
-                      }
-                      spellCheck={false}
-                      value={draft.customModelId}
-                      onChange={(event) =>
+                  <SettingsField label={selectedProvider?.model_label ?? "Model"}>
+                    <Select
+                      value={draft.selectedModelId}
+                      onValueChange={(value) =>
                         setDraft((current) => ({
                           ...current,
-                          customModelId: event.target.value,
+                          selectedModelId: value,
+                          customModelId:
+                            value === "custom" ? current.customModelId : "",
                         }))
                       }
-                    />
-                  ) : null}
-                </CardContent>
-              </Card>
+                    >
+                      <SelectTrigger
+                        aria-label={selectedProvider?.model_label ?? "Model"}
+                        className="full-width"
+                      >
+                        <SelectValue placeholder="Choose model" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectGroup>
+                          {selectedProvider?.models.map((model) => (
+                            <SelectItem key={model.id} value={model.id}>
+                              {model.label}
+                            </SelectItem>
+                          ))}
+                          {selectedProvider?.supports_custom_model ? (
+                            <SelectItem value="custom">Custom</SelectItem>
+                          ) : null}
+                        </SelectGroup>
+                      </SelectContent>
+                    </Select>
 
-              <Card className="surface-card">
-                <CardHeader>
-                  <CardTitle className="tiny-label">API key</CardTitle>
-                </CardHeader>
-                <CardContent className="stack-gap-4">
-                  <div className="stack-gap-2">
+                    {draft.selectedModelId === "custom" ? (
+                      <Input
+                        autoCapitalize="off"
+                        autoComplete="off"
+                        autoCorrect="off"
+                        aria-label="Custom model ID"
+                        name="quarry-model-id"
+                        placeholder={
+                          draft.providerPreset === "openrouter"
+                            ? "provider/model-name"
+                            : "model-id"
+                        }
+                        spellCheck={false}
+                        value={draft.customModelId}
+                        onChange={(event) =>
+                          setDraft((current) => ({
+                            ...current,
+                            customModelId: event.target.value,
+                          }))
+                        }
+                      />
+                    ) : null}
+                  </SettingsField>
+
+                  <SettingsField label="API key">
                     <div className="api-key-input-shell">
                       <Input
                         aria-label="API key"
@@ -547,7 +530,7 @@ export function DiagnosticsDrawer({
                         </Button>
                       ) : null}
                     </div>
-                  </div>
+                  </SettingsField>
                 </CardContent>
               </Card>
 
