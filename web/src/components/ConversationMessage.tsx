@@ -3,9 +3,7 @@ import { CardContent, CardHeader, CardTitle, CardDescription } from "@/component
 import { ResponseReview } from "./ResponseReview";
 import { ReviewPanel } from "./ReviewPanel";
 import { useThreadActions } from "../context/threadActions";
-import type { ParsedSentence, SessionState } from "../types";
-
-export type AssistantMessageSource = "query" | "refinement";
+import type { AssistantMessageSource, ParsedSentence, SessionState } from "../types";
 
 interface ConversationMessageProps {
   entryId: string;

@@ -11,12 +11,17 @@
   white-space: nowrap;
   outline: none;
   user-select: none;
+  cursor: pointer;
   transition:
     background-color 180ms ease,
     border-color 180ms ease,
     color 180ms ease,
     box-shadow 180ms ease,
     transform 120ms ease;
+}
+
+.root:hover:not(:disabled) {
+  transform: translateY(-1px);
 }
 
 .root > svg {

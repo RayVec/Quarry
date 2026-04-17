@@ -191,48 +191,123 @@ class ReviewService:
         citation_id: int,
         replacement: CitationIndexEntry,
         reviewer_note: str,
-    ) -> bool:
-        target = next((entry for entry in session.citation_index if entry.citation_id == citation_id), None)
-        if target is None:
-            return False
+    ) -> int | None:
+        if not (0 <= sentence_index < len(session.parsed_sentences)):
+            return None
 
-        target.chunk_id = replacement.chunk_id
-        target.text = replacement.text
-        target.document_id = replacement.document_id
-        target.document_title = replacement.document_title
-        target.section_heading = replacement.section_heading
-        target.section_path = replacement.section_path
-        target.page_number = replacement.page_number
-        target.page_end = replacement.page_end
-        target.replacement_pending = True
-        target.reviewer_note = reviewer_note
+        sentence = session.parsed_sentences[sentence_index]
+        target_references = [
+            reference for reference in sentence.references if reference.citation_id == citation_id
+        ]
+        if not target_references:
+            return None
 
-        if 0 <= sentence_index < len(session.parsed_sentences):
-            sentence = session.parsed_sentences[sentence_index]
-            for reference in sentence.references:
-                if reference.citation_id == citation_id:
-                    reference.matched_chunk_id = replacement.chunk_id
-                    reference.document_id = replacement.document_id
-                    reference.document_title = replacement.document_title
-                    reference.section_heading = replacement.section_heading
-                    reference.section_path = replacement.section_path
-                    reference.page_number = replacement.page_number
-                    reference.replacement_pending = True
-            sentence.match_quality = MatchQuality.PARTIAL
+        original_entry = next((entry for entry in session.citation_index if entry.citation_id == citation_id), None)
+        if original_entry is None:
+            return None
 
-        return True
+        old_used_outside_sentence = any(
+            reference.citation_id == citation_id
+            for index, parsed_sentence in enumerate(session.parsed_sentences)
+            if index != sentence_index
+            for reference in parsed_sentence.references
+        )
+
+        replacement_entry = next(
+            (
+                entry
+                for entry in session.citation_index
+                if entry.chunk_id == replacement.chunk_id
+                and entry.citation_id != citation_id
+            ),
+            None,
+        )
+        replacement_used_elsewhere = (
+            replacement_entry is not None
+            and any(
+                reference.citation_id == replacement_entry.citation_id
+                for parsed_sentence in session.parsed_sentences
+                for reference in parsed_sentence.references
+            )
+        )
+
+        if old_used_outside_sentence:
+            if replacement_entry is None or replacement_used_elsewhere:
+                target_entry = replacement.model_copy(
+                    update={"citation_id": self._next_citation_id(session)}
+                )
+                session.citation_index.append(target_entry)
+            else:
+                target_entry = replacement_entry
+        else:
+            target_entry = original_entry
+
+        target_entry.chunk_id = replacement.chunk_id
+        target_entry.text = replacement.text
+        target_entry.document_id = replacement.document_id
+        target_entry.document_title = replacement.document_title
+        target_entry.section_heading = replacement.section_heading
+        target_entry.section_path = replacement.section_path
+        target_entry.page_number = replacement.page_number
+        target_entry.page_end = replacement.page_end
+        target_entry.retrieval_score = replacement.retrieval_score
+        target_entry.source_facet = replacement.source_facet
+        target_entry.source_facets = list(replacement.source_facets)
+        target_entry.ambiguity_review_required = replacement.ambiguity_review_required
+        target_entry.ambiguity_gap = replacement.ambiguity_gap
+        target_entry.retrieval_scores = dict(replacement.retrieval_scores)
+        target_entry.replacement_pending = True
+        target_entry.reviewer_note = reviewer_note
+
+        for reference in target_references:
+            reference.citation_id = target_entry.citation_id
+            reference.matched_chunk_id = replacement.chunk_id
+            reference.document_id = replacement.document_id
+            reference.document_title = replacement.document_title
+            reference.section_heading = replacement.section_heading
+            reference.section_path = replacement.section_path
+            reference.page_number = replacement.page_number
+            reference.replacement_pending = True
+
+        sentence.match_quality = MatchQuality.PARTIAL
+
+        if (
+            target_entry.citation_id == citation_id
+            and replacement_entry is not None
+            and not replacement_used_elsewhere
+            and not any(
+                reference.citation_id == replacement_entry.citation_id
+                for parsed_sentence in session.parsed_sentences
+                for reference in parsed_sentence.references
+            )
+        ):
+            session.citation_index = [
+                entry
+                for entry in session.citation_index
+                if entry.citation_id != replacement_entry.citation_id
+            ]
+
+        return target_entry.citation_id
 
     def _record_citation_replacement(
         self,
         *,
         session: SessionState,
+        sentence_index: int,
         citation_id: int,
         replacement_chunk_id: str,
     ) -> None:
-        if any(entry.citation_id == citation_id for entry in session.feedback.citation_replacements):
+        if any(
+            entry.sentence_index == sentence_index and entry.citation_id == citation_id
+            for entry in session.feedback.citation_replacements
+        ):
             return
         session.feedback.citation_replacements.append(
-            CitationReplacement(citation_id=citation_id, replacement_chunk_id=replacement_chunk_id)
+            CitationReplacement(
+                sentence_index=sentence_index,
+                citation_id=citation_id,
+                replacement_chunk_id=replacement_chunk_id,
+            )
         )
 
     async def get_citation_alternatives(self, session_id: str, citation_id: int) -> ScopedRetrievalEnvelope:
@@ -275,19 +350,20 @@ class ReviewService:
         if replacement is None:
             return self.session_store.save(session)
 
-        replaced = self._apply_replacement_to_session(
+        applied_citation_id = self._apply_replacement_to_session(
             session=session,
             sentence_index=sentence_index,
             citation_id=citation_id,
             replacement=replacement,
             reviewer_note="Replaced via citation feedback.",
         )
-        if not replaced:
+        if applied_citation_id is None:
             return self.session_store.save(session)
 
         self._record_citation_replacement(
             session=session,
-            citation_id=citation_id,
+            sentence_index=sentence_index,
+            citation_id=applied_citation_id,
             replacement_chunk_id=replacement.chunk_id,
         )
 
@@ -347,18 +423,19 @@ class ReviewService:
             source_facet="scoped_fallback",
             source_facets=["scoped_fallback"],
         )
-        replaced = self._apply_replacement_to_session(
+        applied_citation_id = self._apply_replacement_to_session(
             session=session,
             sentence_index=sentence_index,
             citation_id=citation_id,
             replacement=replacement_entry,
             reviewer_note="Reviewer selected replacement passage.",
         )
-        if not replaced:
+        if applied_citation_id is None:
             return self.session_store.save(session)
         self._record_citation_replacement(
             session=session,
-            citation_id=citation_id,
+            sentence_index=sentence_index,
+            citation_id=applied_citation_id,
             replacement_chunk_id=request.replacement_chunk_id,
         )
         return self.session_store.save(session)

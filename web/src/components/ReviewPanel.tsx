@@ -22,7 +22,8 @@ export function ReviewPanel({
       (feedback) => feedback.feedback_type === "dislike",
     ).length ?? 0;
   const removedSentenceCount = session.removed_ungrounded_claim_count;
-  const anyFeedback = commentCount > 0 || dislikedCitationCount > 0;
+  const anyFeedback =
+    commentCount > 0 || dislikedCitationCount > 0 || replacementCount > 0;
 
   return (
     <section className="review-panel-shell" data-testid="review-panel">
@@ -42,6 +43,7 @@ export function ReviewPanel({
         </div>
 
         <Button
+          className="review-panel-refine-button"
           data-testid="run-refinement"
           disabled={!interactive || !anyFeedback || busy !== null}
           variant="secondary"

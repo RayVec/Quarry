@@ -6,11 +6,17 @@ import {
   useRef,
   useState,
 } from "react";
-import { Check, Minus, ThumbsDown, ThumbsUp, X } from "lucide-react";
+import {
+  Check,
+  LoaderCircle,
+  Minus,
+  ThumbsDown,
+  ThumbsUp,
+  X,
+} from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Separator } from "@/components/ui/separator";
 import {
   Sheet,
   SheetContent,
@@ -56,6 +62,9 @@ interface CitationDialogProps {
   referenceQuote: string;
   readOnly: boolean;
   session: SessionState;
+  initialAlternatives: CitationIndexEntry[];
+  initialAlternativesLoaded: boolean;
+  onAlternativesLoaded: (alternatives: CitationIndexEntry[]) => void;
   onClose: () => void;
   onSessionUpdate: (session: SessionState) => void;
 }
@@ -157,13 +166,21 @@ export function CitationDialog({
   referenceQuote,
   readOnly,
   session,
+  initialAlternatives,
+  initialAlternativesLoaded,
+  onAlternativesLoaded,
   onClose,
   onSessionUpdate,
 }: CitationDialogProps) {
   const drawerStackRef = useRef<HTMLDivElement>(null);
-  const [showAlternativesSection, setShowAlternativesSection] = useState(false);
-  const [alternatives, setAlternatives] = useState<CitationIndexEntry[]>([]);
+  const [alternatives, setAlternatives] = useState<CitationIndexEntry[]>(
+    initialAlternatives,
+  );
+  const [hasLoadedAlternatives, setHasLoadedAlternatives] = useState(
+    initialAlternativesLoaded,
+  );
   const [loadingAlternatives, setLoadingAlternatives] = useState(false);
+  const [replacingAlternativeId, setReplacingAlternativeId] = useState<number | null>(null);
   const [expandedAlternatives, setExpandedAlternatives] = useState<Set<number>>(new Set());
 
   const currentFeedback = useMemo(() => {
@@ -205,6 +222,8 @@ export function CitationDialog({
       null
     );
   }, [sourceSentence, citation.citation_id, referenceQuote]);
+  const isReplacementPending =
+    citation.replacement_pending || sourceReference?.replacement_pending === true;
   const matchQuality = useMemo(() => {
     return describeUnifiedMatchQuality(
       citation.retrieval_score,
@@ -231,9 +250,31 @@ export function CitationDialog({
     sourceSentence?.status,
     sourceSentence?.sentence_text,
   ]);
+  const matchQualityDisplay = isReplacementPending
+    ? {
+        headline: "Pending review",
+        detail:
+          "This citation was replaced manually. Match quality will update after the next verification or refinement pass.",
+        level: "pending" as const,
+      }
+    : matchQuality;
+
+  const showAlternativesSection = currentFeedback === "dislike";
 
   useEffect(() => {
-    if (!(currentFeedback === "dislike" && showAlternativesSection)) {
+    setAlternatives(initialAlternatives);
+    setHasLoadedAlternatives(initialAlternativesLoaded);
+    setExpandedAlternatives(new Set());
+  }, [
+    citation.citation_id,
+    citation.chunk_id,
+    initialAlternatives,
+    initialAlternativesLoaded,
+    session.session_id,
+  ]);
+
+  useEffect(() => {
+    if (!showAlternativesSection) {
       return;
     }
     const stack = drawerStackRef.current;
@@ -242,6 +283,26 @@ export function CitationDialog({
     }
     stack.scrollTop = stack.scrollHeight;
   }, [currentFeedback, showAlternativesSection]);
+
+  useEffect(() => {
+    if (
+      !(
+        showAlternativesSection &&
+        (alternatives.length > 0 || hasLoadedAlternatives)
+      )
+    ) {
+      return;
+    }
+    const stack = drawerStackRef.current;
+    if (!stack) {
+      return;
+    }
+    stack.scrollTop = stack.scrollHeight;
+  }, [
+    alternatives.length,
+    hasLoadedAlternatives,
+    showAlternativesSection,
+  ]);
 
   async function handleFeedback(feedbackType: "like" | "dislike") {
     const newFeedbackType = currentFeedback === feedbackType ? "neutral" : feedbackType;
@@ -254,14 +315,6 @@ export function CitationDialog({
     startTransition(() => {
       onSessionUpdate(response.session);
     });
-
-    if (newFeedbackType === "dislike") {
-      setShowAlternativesSection(true);
-      setAlternatives([]);
-    } else {
-      setShowAlternativesSection(false);
-      setAlternatives([]);
-    }
   }
 
   async function handleLoadAlternatives() {
@@ -271,7 +324,10 @@ export function CitationDialog({
         session.session_id,
         citation.citation_id,
       );
-      setAlternatives(altResponse.citations.slice(0, 3));
+      const nextAlternatives = altResponse.citations.slice(0, 3);
+      setAlternatives(nextAlternatives);
+      setHasLoadedAlternatives(true);
+      onAlternativesLoaded(nextAlternatives);
     } catch (error) {
       console.error("Failed to load alternatives:", error);
     } finally {
@@ -280,18 +336,25 @@ export function CitationDialog({
   }
 
   async function handleReplaceWithAlternative(replacementCitationId: number) {
-    const response = await api.replaceWithAlternative(
-      session.session_id,
-      sentenceIndex,
-      citation.citation_id,
-      replacementCitationId,
-    );
-    startTransition(() => {
-      onSessionUpdate(response.session);
-      setShowAlternativesSection(false);
-      setAlternatives([]);
-      onClose();
-    });
+    setReplacingAlternativeId(replacementCitationId);
+    try {
+      const response = await api.replaceWithAlternative(
+        session.session_id,
+        sentenceIndex,
+        citation.citation_id,
+        replacementCitationId,
+      );
+      startTransition(() => {
+        setAlternatives([]);
+        setHasLoadedAlternatives(false);
+        setExpandedAlternatives(new Set());
+        onSessionUpdate(response.session);
+      });
+    } catch (error) {
+      console.error("Failed to replace citation with alternative:", error);
+    } finally {
+      setReplacingAlternativeId(null);
+    }
   }
 
   function toggleExpandAlternative(citationId: number) {
@@ -366,15 +429,23 @@ export function CitationDialog({
               </CardHeader>
               <CardContent className="citation-drawer-match-card-content">
                 <div
-                  className={`retrieval-strength retrieval-strength--${matchQuality.level}`}
+                  className={`retrieval-strength retrieval-strength--${matchQualityDisplay.level}`}
                 >
                   <div className="retrieval-strength-headline-row">
                     <span className="retrieval-strength-icon">
-                      <MatchQualityIcon level={matchQuality.level} />
+                      {isReplacementPending ? (
+                        <LoaderCircle
+                          aria-hidden
+                          size={MATCH_QUALITY_ICON_SIZE}
+                          strokeWidth={MATCH_QUALITY_ICON_STROKE}
+                        />
+                      ) : (
+                        <MatchQualityIcon level={matchQuality.level} />
+                      )}
                     </span>
-                    <p className="retrieval-strength-headline">{matchQuality.headline}</p>
+                    <p className="retrieval-strength-headline">{matchQualityDisplay.headline}</p>
                   </div>
-                  <p className="retrieval-strength-detail">{matchQuality.detail}</p>
+                  <p className="retrieval-strength-detail">{matchQualityDisplay.detail}</p>
                 </div>
               </CardContent>
             </Card>
@@ -385,7 +456,7 @@ export function CitationDialog({
               <CardContent className="citation-feedback-actions">
                 <Button
                   data-testid="like-citation"
-                  disabled={readOnly || loadingAlternatives}
+                  disabled={readOnly || loadingAlternatives || replacingAlternativeId !== null}
                   onClick={() => handleFeedback("like")}
                   type="button"
                   variant={currentFeedback === "like" ? "default" : "outline"}
@@ -395,7 +466,7 @@ export function CitationDialog({
                 </Button>
                 <Button
                   data-testid="dislike-citation"
-                  disabled={readOnly || loadingAlternatives}
+                  disabled={readOnly || loadingAlternatives || replacingAlternativeId !== null}
                   onClick={() => handleFeedback("dislike")}
                   type="button"
                   variant={currentFeedback === "dislike" ? "default" : "outline"}
@@ -407,71 +478,74 @@ export function CitationDialog({
             </Card>
           </div>
 
-          {currentFeedback === "dislike" && showAlternativesSection ? (
-            <Card className="citation-alternatives-card">
+          {showAlternativesSection ? (
+            <Card
+              className="citation-drawer-card citation-drawer-card--surface citation-drawer-alternatives-card citation-alternatives-card"
+              size="sm"
+            >
               <CardHeader>
                 <CardTitle>
                   You can select similar passages to replace
                 </CardTitle>
               </CardHeader>
               <CardContent>
-                {alternatives.length === 0 ? (
+                {!hasLoadedAlternatives ? (
                   <Button
                     className="citation-alternatives-load-button"
                     data-testid="load-alternatives"
-                    disabled={readOnly || loadingAlternatives}
+                    disabled={readOnly || loadingAlternatives || replacingAlternativeId !== null}
                     onClick={handleLoadAlternatives}
                     type="button"
                   >
                     {loadingAlternatives ? "Searching..." : "Show me similar passages"}
                   </Button>
                 ) : (
-                  <div className="candidate-list citation-candidate-list">
+                  <div className="citation-candidate-list">
                     {alternatives.map((alt) => {
                       const isExpanded = expandedAlternatives.has(alt.citation_id);
+                      const isReplacing = replacingAlternativeId === alt.citation_id;
                       return (
-                        <Card className="candidate-item citation-candidate-item-card" key={alt.citation_id}>
-                          <CardContent className="citation-candidate-content">
-                            <div className="citation-candidate-meta">
+                        <article className="citation-candidate-item" key={alt.citation_id}>
+                          <div className="citation-candidate-content">
+                            <p className="citation-candidate-meta">
                               <strong>{alt.document_title}</strong>
                               {alt.section_heading ? <span> • {alt.section_heading}</span> : null}
                               <span> (Page {alt.page_number})</span>
-                            </div>
+                            </p>
                             <p
-                              style={{
-                                display: "-webkit-box",
-                                WebkitLineClamp: isExpanded ? "unset" : 6,
-                                WebkitBoxOrient: "vertical",
-                                overflow: "hidden",
-                                lineHeight: "1.5",
-                              }}
+                              className={`citation-candidate-passage ${isExpanded ? "citation-candidate-passage--expanded" : ""}`}
                             >
                               {alt.text}
                             </p>
-                            <Separator />
                             <div className="citation-candidate-actions">
-                              <Button
-                                className="citation-alt-action-button"
+                              <button
+                                className="citation-alt-text-button"
                                 data-testid={`expand-alternative-${alt.citation_id}`}
                                 onClick={() => toggleExpandAlternative(alt.citation_id)}
                                 type="button"
-                                variant="ghost"
                               >
-                                {isExpanded ? "Show less" : "Show more"}
-                              </Button>
+                                {isExpanded ? "Read less" : "Read more"}
+                              </button>
                               <Button
-                                className="citation-alt-action-button"
+                                className="citation-alt-replace-button"
                                 data-testid={`replace-with-alternative-${alt.citation_id}`}
-                                disabled={readOnly}
+                                disabled={readOnly || replacingAlternativeId !== null}
                                 onClick={() => handleReplaceWithAlternative(alt.citation_id)}
                                 type="button"
-                                variant="secondary"
+                                variant="default"
                               >
-                                Replace with this passage
+                                {isReplacing ? (
+                                  <>
+                                    <LoaderCircle className="spin-icon" data-icon="inline-start" />
+                                    Replacing...
+                                  </>
+                                ) : (
+                                  "Replace"
+                                )}
                               </Button>
                             </div>
-                          </CardContent>
-                        </Card>
+                          </div>
+                        </article>
                       );
                     })}
                   </div>

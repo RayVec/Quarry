@@ -162,6 +162,7 @@ def open_selection_comment_editor(page: Page) -> None:
 
 
 def test_response_review_dialog_and_feedback_flow(page: Page, web_server) -> None:
+    page.set_viewport_size({"width": 1280, "height": 800})
     run_query(page)
 
     page.locator("[data-testid^='citation-']").first.click()
@@ -169,11 +170,19 @@ def test_response_review_dialog_and_feedback_flow(page: Page, web_server) -> Non
 
     page.get_by_test_id("dislike-citation").click()
     page.get_by_test_id("load-alternatives").click()
+    assert page.evaluate(
+        """
+        () => {
+          const stack = document.querySelector('.citation-drawer-stack');
+          return Boolean(stack && stack.scrollHeight > stack.clientHeight);
+        }
+        """
+    )
     replacement = page.locator("[data-testid^='replace-with-alternative-']").first
     expect(replacement).to_be_visible()
     replacement.click()
 
-    expect(page.get_by_test_id("citation-dialog")).to_be_hidden()
+    expect(page.get_by_test_id("citation-dialog")).to_be_visible()
     expect(page.locator(".citation-pill.replaced").first).to_be_visible()
 
     expect(page.get_by_test_id("feedback-summary")).to_contain_text("0 comments captured, 1 citation replacements pending.")
@@ -213,4 +222,3 @@ def test_unified_refinement_flow(page: Page, web_server) -> None:
     assert parse_metric(page.get_by_test_id("status-sentences").inner_text()) > 0
     expect(page.get_by_test_id("status-refinements")).to_have_text("1")
     close_diagnostics(page)
-

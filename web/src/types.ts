@@ -1,4 +1,5 @@
 export type ResponseMode = "response_review" | "generation_failed";
+export type AssistantMessageSource = "query" | "refinement";
 
 export type QueryType = "single_hop" | "multi_hop";
 export type QueryRunStatus = "running" | "completed" | "failed";
@@ -129,6 +130,7 @@ export interface FeedbackState {
     resolved: boolean;
   }>;
   citation_replacements: Array<{
+    sentence_index: number;
     citation_id: number;
     replacement_chunk_id: string;
   }>;

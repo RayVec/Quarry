@@ -229,6 +229,7 @@ class SelectionCommentEdit(BaseModel):
 
 
 class CitationReplacement(BaseModel):
+    sentence_index: int = -1
     citation_id: int
     replacement_chunk_id: str
 

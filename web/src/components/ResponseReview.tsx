@@ -470,7 +470,11 @@ export function ResponseReview({
   }, [selectionDraft]);
 
   return (
-    <TooltipProvider delayDuration={0}>
+    <TooltipProvider
+      delayDuration={0}
+      skipDelayDuration={0}
+      disableHoverableContent
+    >
       <section className="response-review">
         <div
         className="response-reading-flow"
@@ -634,6 +638,9 @@ export function ResponseReview({
                         const citation = citationById.get(
                           reference.citation_id,
                         );
+                        const isReplacementPending =
+                          reference.replacement_pending ||
+                          citation?.replacement_pending === true;
                         const unifiedMatch = citation
                           ? describeUnifiedMatchQuality(
                               citation.retrieval_score,
@@ -665,7 +672,9 @@ export function ResponseReview({
                               ? "partial"
                               : "none"
                           : matchQuality;
-                        if (pillQuality === "none") return null;
+                        if (pillQuality === "none" && !isReplacementPending) {
+                          return null;
+                        }
 
                         const feedback = citationFeedbackMap.get(
                           `${sentence.sentence_index}:${reference.citation_id}`,
@@ -675,6 +684,9 @@ export function ResponseReview({
                         const tooltipDoc =
                           reference.document_title?.trim() || "—";
                         const tooltipMatchLabel =
+                          isReplacementPending
+                            ? "Pending review"
+                            :
                           unifiedMatch?.headline ??
                           matchQualityTooltipLabel(pillQuality);
 
@@ -682,7 +694,11 @@ export function ResponseReview({
                           <Tooltip key={`${sentence.sentence_index}-${index}`}>
                             <TooltipTrigger asChild>
                               <Button
-                                className={`citation-pill citation-pill--${pillQuality} ${reference.replacement_pending ? "replaced" : ""} ${
+                                className={`citation-pill ${
+                                  isReplacementPending
+                                    ? "replaced"
+                                    : `citation-pill--${pillQuality}`
+                                } ${
                                   hasCommentOverlay
                                     ? "tooltip-suppressed"
                                     : "citation-pill-tooltip-anchor"
@@ -724,6 +740,11 @@ export function ResponseReview({
                                 <hr className="citation-pill-tooltip-rule" />
                                 <span className="citation-pill-tooltip-match">
                                   {tooltipMatchLabel}
+                                  {isReplacementPending ? (
+                                    <span className="citation-pill-tooltip-match-detail">
+                                      This citation was replaced manually and has not been re-verified yet.
+                                    </span>
+                                  ) : null}
                                 </span>
                               </TooltipContent>
                             ) : null}
