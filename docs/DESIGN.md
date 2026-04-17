@@ -42,6 +42,7 @@ QUARRY uses a dual-font system:
 
 - **Manrope** for display text and section-level headings
 - **Inter** for body text, labels, metadata, and dense information
+- the current CSS also imports **Geist Variable** as the shared sans token for common UI primitives, but the main shell still renders headings in Manrope and body copy in Inter
 
 Hierarchy should consistently pair:
 
@@ -124,7 +125,7 @@ Once a query exists, the layout transitions into a working research surface:
 
 ### Sidebar
 
-- uses `surface-container-low`
+- uses the dedicated `sidebar` surface token (`#EAF1FF`) rather than the generic `surface-container-low`
 - does not use explicit divider lines between sections
 - recent items use tonal selection rather than outlined cards
 
@@ -138,8 +139,8 @@ Once a query exists, the layout transitions into a working research surface:
 
 ### User Message
 
-- may appear as a raised module on `surface-container-lowest`
-- includes a left accent bar to show the user-originated prompt
+- currently appears as a raised module on `surface-container`
+- does not use a left accent bar; distinction comes from placement, tone, and the `Query` label
 
 ### Assistant Message
 
@@ -154,8 +155,8 @@ Once a query exists, the layout transitions into a working research surface:
 
 ### Review Panel
 
-- uses tonal lift rather than section dividers
-- summary and actions should be grouped through spacing and background
+- keeps the surface lightweight
+- summary and actions are separated with spacing and a very light top rule rather than a heavy enclosing card
 
 ### Drawers
 
@@ -164,8 +165,8 @@ Once a query exists, the layout transitions into a working research surface:
 
 ### Citation drawer (review)
 
-- **Header:** eyebrow only (`Citation [n]`) plus a close control. No large title block in the header (document and section context stay in **Source metadata** below).
-- **Close control:** `lucide-react` icon (`X`) with an accessible name (for example `aria-label="Close citation"`). Use the `drawer-close-trigger` class for the compact square hit target. Keep this separate from `diagnostics-trigger`, which is reserved for the thread-header gear so the two controls can be sized independently (`web/src/styles/app.css`).
+- **Header:** eyebrow (`Citation [n]`) plus the visible title `Review citation support`.
+- **Close control:** provided by the shared sheet primitive in `web/src/components/ui/sheet.tsx`; current drawers use the built-in icon-only close button (`sheet.module.css` `closeIconButton` with screen-reader text `Close`) rather than the older `drawer-close-trigger` app-shell helper.
 - **Match quality:** one short, readable summary (Strong / Good / Fair / Weak) plus a brief description. Prefer plain language; avoid implying calibrated “confidence” or showing raw retrieval numbers in the primary view.
 - **Retrieval facet:** the facet string is not duplicated in the drawer UI; it remains in session/API data and related metadata sections as needed.
 
@@ -180,14 +181,19 @@ Once a query exists, the layout transitions into a working research surface:
 The design system now anchors itself to the palette shown in the card reference:
 
 - `primary`: `#1B365D`
-- `secondary`: `#475569`
+- `primary-container`: `#10294A`
+- `primary-fixed`: `#C7D6F1`
+- `secondary`: `#EDF2F8`
+- `secondary-container`: `#334155`
+- `ink-muted`: `#475569`
 - `tertiary`: `#059669`
 - `neutral`: `#0F172A`
 
 These colors are used semantically:
 
 - `primary` drives the main action, active navigation, and dominant data accents
-- `secondary` handles body copy, supporting controls, metadata, and secondary actions
+- `secondary` is the pale support surface used by utility controls and supporting backgrounds
+- `secondary-container` and `ink-muted` handle supporting copy, metadata, and lower-emphasis labels
 - `tertiary` signals verified, grounded, or positive states
 - `neutral` anchors headlines, dense ink, and high-contrast iconography
 
@@ -204,14 +210,16 @@ The surrounding surfaces should sit in the near-white end of the `secondary` sca
 
 Supporting tokens in the current implementation:
 
-- `primary-container`: darker companion for hover and pressed primary states
-- `primary-fixed`: pale blueprint tint for annotations and passive highlights
+- `sidebar`: dedicated navigation surface (`#EAF1FF`)
 - `outline-variant`: low-contrast structural line for fields and outlined controls
+- `ghost-border`: ultra-light utility border
+- `surface-stroke`: low-contrast inset stroke used by raised surfaces
 - `tertiary-fixed`: soft verified-state fill
 - `warning-surface` / `warning-ink`: restrained amber review feedback
+- `warning-accent`: stronger amber accent used for interactive warning affordances
 - `error-surface` / `error-ink`: restrained red review feedback
 - `on-surface`: defaults to `neutral`
-- `muted`: defaults to `secondary`
+- `muted`: currently resolves to `#F1F5F9`
 
 ## Interaction Notes
 
@@ -225,6 +233,9 @@ Supporting tokens in the current implementation:
 The current frontend implementation applies this system in:
 
 - `web/src/App.tsx`
+- `web/src/features/thread/components/AppSidebar.tsx`
+- `web/src/features/thread/components/LandingStage.tsx`
+- `web/src/features/thread/components/ConversationStage.tsx`
 - `web/src/components/QueryComposer.tsx`
 - `web/src/components/ConversationMessage.tsx`
 - `web/src/components/PendingConversationMessage.tsx`
@@ -232,6 +243,7 @@ The current frontend implementation applies this system in:
 - `web/src/components/ReviewPanel.tsx`
 - `web/src/components/CitationDialog.tsx`
 - `web/src/components/DiagnosticsDrawer.tsx`
+- `web/src/components/ui/sheet.tsx`
 - `web/src/utils/retrievalDisplay.ts`
 - `web/src/styles/app.css`
 

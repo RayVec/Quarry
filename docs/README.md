@@ -99,15 +99,25 @@ Important config sections:
   - `use_live_generation`
   - `use_live_decomposition`
   - `use_live_metadata_enrichment`
+  - `use_live_embeddings`
+  - `embedding_base_url`
+  - `embedding_api_key`
+  - `embedding_model`
+  - `embedding_dimensions`
 - `[mlx]`
   - `text_model`
   - `vision_model`
   - `max_new_tokens`
   - `page_image_dim`
 - `[local_models]`
-  - `embedding_model`
+  - `embedding_model` (local embedding model)
   - `reranker_model`
   - `nli_model`
+
+Embedding path note:
+
+- local embedding uses `[local_models].embedding_model` (default `intfloat/e5-large-v2`)
+- hosted embedding uses `[hosted].embedding_model` (default `hash-embedding-v1`) when `hosted.use_live_embeddings = true`
 
 The easiest mixed setup is:
 
@@ -232,13 +242,13 @@ Conversation history is frontend-local and browser-persisted:
 The current UI keeps review actions but moves them into contextual surfaces:
 
 - paragraph-style reading flow with inline sentence interactions
-- text-selection-first comments: no persistent comment controls are visible until text is selected
-- a floating comment icon appears near the active selection and opens a compact side card
-- saved comments render as inline yellow annotation highlights; clicking a highlight opens comment edit/delete
+- text-selection-first comments: no new-comment controls are visible until text is selected
+- a floating comment icon appears near the active selection and opens a compact floating card
+- saved comments render as inline yellow annotation highlights with margin indicators; clicking either opens comment edit/delete
 - citation drawer for quote context
 - displayed citation badges are renumbered contiguously (1..N) for readability, while internal citation IDs remain stable for review actions
-- expandable “Review and refine” panel
-- hidden diagnostics drawer for runtime and retrieval details
+- review panel beneath the newest assistant message for feedback summary and refine
+- workspace drawer with provider settings and runtime diagnostics tabs
 
 Response rendering now uses paragraph grouping markers from generation/parsing:
 
@@ -246,14 +256,13 @@ Response rendering now uses paragraph grouping markers from generation/parsing:
 - parser assigns `paragraph_index` per sentence
 - frontend renders sentence text continuously within each paragraph
 
-Frontend citation quality display now consumes a single sentence-level field:
+Frontend citation quality display is resolved per reference in the client with `describeUnifiedMatchQuality(...)`, using retrieval score plus verification signals such as exact-quote match, quote coverage, sentence status, and confidence labels. The backend still exposes sentence-level `match_quality = strong | partial | none` as a coarse fallback.
 
-- `match_quality = strong | partial | none`
-- `strong` renders a green citation badge
-- `partial` renders an amber citation badge
-- `none` shows no badge (for structural or no-ref sentences)
+- `strong` / `good` display as a green citation badge
+- `fair` displays as an amber citation badge
+- `weak` hides the badge unless the citation is in a pending replacement state
 
-Raw `status` and `confidence_label` remain in diagnostics/session payloads for debugging and logs.
+Raw `status`, `confidence_label`, and backend `match_quality` remain in diagnostics/session payloads for debugging and logs.
 
 The backend now exposes a unified review action model built around text selections:
 
@@ -269,7 +278,7 @@ The backend now exposes a unified review action model built around text selectio
 
 Important current behavior:
 
-- obvious query shapes are classified heuristically first before escalating to a model
+- query classification is heuristic-only; unmatched shapes default to `multi_hop`
 - single-hop queries use smaller retrieval budgets than multi-hop queries
 - multi-hop retrieval now keeps a wider anchored candidate pool (`retrieval.multihop_anchor_pool_size`, default 40) before reranking down to `retrieval.multihop_rerank_budget` (default 20)
 - citation entries now preserve facet provenance in both `source_facet` (primary facet) and `source_facets` (all facets that surfaced the chunk)
@@ -284,7 +293,7 @@ Important current behavior:
 - lingering ungrounded `SYNTHESIS` sentences are also removed from the final response
 - regeneration now avoids repeated retries when the model is converging on the same failed sentence
 - retries that do happen now include the previous failed rewrite and an explicit `[NO_REF]` escape path
-- sentence repair prompts can use shorter exact quotes (8 to 10 words) so regenerated prose can stay natural, while initial generation still uses 10 to 40 word anchors
+- default exact-match verification still expects at least 10 words for a quoted anchor, but sentence-repair prompts can use shorter verbatim anchors (8 to 15 words) and post-regeneration verification honors that lower minimum
 
 ## Logging
 

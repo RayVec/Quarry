@@ -526,6 +526,7 @@ Current behavior:
 - citation badges shown to users are renumbered contiguously (`[1]..[N]`) for readability; backend/internal citation IDs remain unchanged for review mutations
 - removed-sentence warnings are surfaced to the reviewer in the message and review panel
 - older assistant messages remain visible but read-only
+- the workspace drawer combines provider settings and diagnostics; the landing gear opens it to settings, and the thread gear opens it to diagnostics
 - comment capture uses text selections (character ranges) instead of sentence-index or response-level freeform comments
 - refine input is driven by **unresolved selection comments** and/or **disliked citations**; citation **likes** do not trigger a rewrite by themselves
 - response-level supplement comments are no longer a separate path
@@ -543,21 +544,21 @@ Generation and parsing now support lightweight paragraph grouping:
 
 Frontend rendering (`ResponseReview.tsx`) groups by `paragraph_index` and renders sentences in a continuous paragraph flow with inline citation badges.
 
-The left per-sentence confidence rail has been removed from main reading flow. Citation badges carry the user-facing quality signal:
+The left per-sentence confidence rail has been removed from main reading flow. Citation badges now use a richer per-reference display model on the client (`web/src/utils/retrievalDisplay.ts`) that combines retrieval score / ambiguity signals with sentence and reference verification state. The backend sentence-level `match_quality` field still exists, but the frontend uses it as a fallback rather than the sole badge signal.
 
-- `match_quality = strong` → green badge
-- `match_quality = partial` → amber badge
-- `match_quality = none` → no badge shown
+- unified `strong` / `good` → green badge
+- unified `fair` → amber badge
+- unified `weak` → no badge shown, unless the citation is pending replacement
 
-`match_quality` is computed server-side after verification/NLI scoring:
+Server-side `match_quality` is still computed after verification/NLI scoring:
 
 - `strong`: verified sentence with supported references and no short-anchor downgrade
 - `partial`: partially verified support and/or shorter regeneration anchor
 - `none`: structure/no-ref sentence (or no verified references after filtering)
 
-Raw verification fields (`status`, `confidence_label`, `confidence_score`) remain in the session payload for diagnostics and logging; frontend reading flow relies on `match_quality`.
+Raw verification fields (`status`, `confidence_label`, `confidence_score`) remain in the session payload for diagnostics and logging, and the citation drawer uses the same unified match display model as the inline badges.
 
-The diagnostics drawer close button uses the same icon-only pattern and `drawer-close-trigger` styling as the citation drawer.
+Both drawers currently use the shared `SheetContent` close button from `web/src/components/ui/sheet.tsx` (`sheet.module.css` `closeIconButton` plus screen-reader text `Close`); they are not wired through the older `drawer-close-trigger` helper in `web/src/styles/app.css`.
 
 ### 10.2.2 Selection comment lifecycle
 

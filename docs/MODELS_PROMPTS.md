@@ -80,7 +80,7 @@ Query **classification** (single-hop vs multi-hop) is **heuristic-only** in `Que
 
 Primary Apple profile parser:
 
-- `mlx-community/Qwen3-VL-4B-Instruct-4bit` (via the `qwen3_vl_mlx` / `mlx_vlm` adapter)
+- `mlx-community/Qwen3-VL-4B-Instruct-4bit` (adapter aliases: `qwen3_vl_mlx`, `mlx_vlm`, `apple_silicon`)
 
 Used for:
 
@@ -106,14 +106,20 @@ Lightweight text-file parser:
 - `basic_text`
 - used only for `.md` and `.txt` inputs
 
-### 3.3 Embedding model
+### 3.3 Local embedding model
 
 - `intfloat/e5-large-v2`
 
 Used for:
 
-- embedding chunks during indexing
-- embedding queries during dense retrieval
+- embedding chunks during indexing (when `use_local_models = true`)
+- embedding queries during dense retrieval (when `use_local_models = true`)
+
+Hosted embedding path:
+
+- enabled with `hosted.use_live_embeddings = true`
+- uses `hosted.embedding_base_url` + `hosted.embedding_api_key`
+- model comes from `hosted.embedding_model` (default `hash-embedding-v1`, dimensions default `192`)
 
 ### 3.4 Reranker
 
@@ -137,7 +143,11 @@ Scoring policy:
 - Argmax over softmax probabilities maps `entailment → supported`, `neutral → partially_supported`, `contradiction → not_supported`.
 - **Soft entailment threshold:** if the argmax lands on `neutral` but the raw entailment probability is ≥ `0.35` (`ENTAILMENT_SOFT_THRESHOLD`), the label is upgraded to `supported`. This handles near-verbatim rewrites where probability mass is split between entailment and neutral without a decisive winner.
 
-On Apple Silicon the model is replaced by `HeuristicNLIClient`, which scores token-set overlap as `max(precision, recall)` (see Architecture §7.7).
+Runtime behavior:
+
+- when `use_local_models = true`, QUARRY uses `LocalMNLIClient` on both `apple_silicon` and `gpu`
+- if the local MNLI model fails to load or score, that path falls back to `NullConfidenceNLIClient` (labels/scores become `None`)
+- `HeuristicNLIClient` is used only when local models are disabled entirely
 
 ## 4. Non-model Retrieval Components
 
