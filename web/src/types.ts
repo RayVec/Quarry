@@ -1,10 +1,16 @@
 export type ResponseMode = "response_review" | "generation_failed";
 export type AssistantMessageSource = "query" | "refinement";
+export type RefinementScope = "none" | "local" | "global";
+export type ResponseBasis =
+  | "social"
+  | "thread_context_only"
+  | "corpus_search";
 
 export type QueryType = "single_hop" | "multi_hop";
 export type QueryRunStatus = "running" | "completed" | "failed";
 export type QueryProgressStage =
   | "queued"
+  | "orchestrating"
   | "understanding"
   | "searching"
   | "evidence"
@@ -14,6 +20,12 @@ export type QueryProgressStage =
   | "checking"
   | "completed"
   | "failed";
+
+export interface QueryStageDescriptor {
+  key: QueryProgressStage;
+  label: string;
+  detail: string;
+}
 
 export type RuntimeMode = "local" | "hybrid" | "hosted";
 export type RuntimeProfile = "apple_silicon" | "gpu";
@@ -146,6 +158,9 @@ export interface FeedbackState {
 export interface SessionState {
   session_id: string;
   original_query: string;
+  source_message?: string | null;
+  resolved_query?: string | null;
+  derived_from_session_id?: string | null;
   query_type?: QueryType | null;
   facets: string[];
   citation_index: CitationIndexEntry[];
@@ -153,6 +168,8 @@ export interface SessionState {
   parsed_sentences: ParsedSentence[];
   feedback: FeedbackState;
   refinement_count: number;
+  refinement_scope?: RefinementScope | null;
+  change_summary?: string | null;
   retrieval_diagnostics: FacetRetrievalDiagnostic[];
   ui_messages: UIMessage[];
   removed_ungrounded_claim_count: number;
@@ -167,10 +184,43 @@ export interface SessionState {
   query_stage: QueryProgressStage;
   query_stage_label: string;
   query_stage_detail: string;
+  query_stage_catalog?: QueryStageDescriptor[];
+}
+
+export interface ConversationContextTurn {
+  role: "user" | "assistant";
+  text: string;
+  search_backed: boolean;
+  session_id?: string | null;
+  derived_from_session_id?: string | null;
+}
+
+export interface AssistantTurnState {
+  turn_id: string;
+  content: string;
+  used_search: boolean;
+  response_basis: ResponseBasis;
+  linked_session_id?: string | null;
+  derived_from_session_id?: string | null;
+}
+
+export interface MessageRunState {
+  message_run_id: string;
+  status: QueryRunStatus;
+  stage: QueryProgressStage;
+  stage_label: string;
+  stage_detail: string;
+  stage_catalog: QueryStageDescriptor[];
+  assistant_turn?: AssistantTurnState | null;
+  session?: SessionState | null;
 }
 
 export interface SessionEnvelope {
   session: SessionState;
+}
+
+export interface MessageRunEnvelope {
+  message_run: MessageRunState;
 }
 
 export interface HostedModelOption {

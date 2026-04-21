@@ -1,11 +1,29 @@
 import { useEffect, useRef } from "react";
 import { api } from "@/api";
-import type { SessionState } from "@/types";
+import type { AssistantTurnState, MessageRunState, SessionState } from "@/types";
 import { findResumablePendingEntry, type ThreadEntry } from "./model";
 
 interface UseQueryPollingOptions {
   thread: ThreadEntry[];
-  onResumePendingSession: () => void;
+  onResumePendingWork: () => void;
+  onPendingMessageRunUpdated: (
+    pendingId: string,
+    nextMessageRun: MessageRunState,
+  ) => void;
+  onPendingMessageRunFailed: (
+    pendingId: string,
+    nextMessageRun: MessageRunState,
+  ) => void;
+  onPendingChatCompleted: (
+    pendingId: string,
+    nextTurn: AssistantTurnState,
+  ) => void;
+  onPendingResearchStarted: (
+    pendingId: string,
+    userEntryId: string,
+    nextMessageRun: MessageRunState,
+    nextSession: SessionState,
+  ) => void;
   onPendingSessionUpdated: (
     pendingId: string,
     nextSession: SessionState,
@@ -27,7 +45,11 @@ function sleep(ms: number) {
 
 export function useQueryPolling({
   thread,
-  onResumePendingSession,
+  onResumePendingWork,
+  onPendingMessageRunUpdated,
+  onPendingMessageRunFailed,
+  onPendingChatCompleted,
+  onPendingResearchStarted,
   onPendingSessionUpdated,
   onPendingSessionCompleted,
   onPendingSessionFailed,
@@ -36,7 +58,11 @@ export function useQueryPolling({
   const pollTokenRef = useRef(0);
   const resumedPersistedPendingRef = useRef(false);
   const callbacksRef = useRef({
-    onResumePendingSession,
+    onResumePendingWork,
+    onPendingMessageRunUpdated,
+    onPendingMessageRunFailed,
+    onPendingChatCompleted,
+    onPendingResearchStarted,
     onPendingSessionUpdated,
     onPendingSessionCompleted,
     onPendingSessionFailed,
@@ -44,7 +70,11 @@ export function useQueryPolling({
   });
 
   callbacksRef.current = {
-    onResumePendingSession,
+    onResumePendingWork,
+    onPendingMessageRunUpdated,
+    onPendingMessageRunFailed,
+    onPendingChatCompleted,
+    onPendingResearchStarted,
     onPendingSessionUpdated,
     onPendingSessionCompleted,
     onPendingSessionFailed,
@@ -74,6 +104,53 @@ export function useQueryPolling({
     }
   }
 
+  async function pollMessageRun(
+    pendingId: string,
+    userEntryId: string,
+    messageRunId: string,
+    pollToken: number,
+  ) {
+    while (pollTokenRef.current === pollToken) {
+      const response = await api.getMessageRun(messageRunId);
+      const nextMessageRun = response.message_run;
+      if (nextMessageRun.assistant_turn) {
+        callbacksRef.current.onPendingChatCompleted(
+          pendingId,
+          nextMessageRun.assistant_turn,
+        );
+        callbacksRef.current.onPollingSettled();
+        return;
+      }
+      if (nextMessageRun.session) {
+        callbacksRef.current.onPendingResearchStarted(
+          pendingId,
+          userEntryId,
+          nextMessageRun,
+          nextMessageRun.session,
+        );
+        await pollQueryProgress(
+          pendingId,
+          nextMessageRun.session.session_id,
+          pollToken,
+        );
+        return;
+      }
+      if (nextMessageRun.status === "failed") {
+        callbacksRef.current.onPendingMessageRunFailed(
+          pendingId,
+          nextMessageRun,
+        );
+        callbacksRef.current.onPollingSettled();
+        return;
+      }
+      callbacksRef.current.onPendingMessageRunUpdated(
+        pendingId,
+        nextMessageRun,
+      );
+      await sleep(450);
+    }
+  }
+
   useEffect(() => {
     if (resumedPersistedPendingRef.current) {
       return;
@@ -81,19 +158,32 @@ export function useQueryPolling({
     resumedPersistedPendingRef.current = true;
 
     const pending = findResumablePendingEntry(thread);
-    if (!pending?.session) {
+    if (!pending) {
       return;
     }
 
-    callbacksRef.current.onResumePendingSession();
+    callbacksRef.current.onResumePendingWork();
     const pollToken = ++pollTokenRef.current;
-    void pollQueryProgress(
-      pending.id,
-      pending.session.session_id,
-      pollToken,
-    ).catch(() => {
-      callbacksRef.current.onPollingSettled();
-    });
+    if (pending.session?.query_status === "running") {
+      void pollQueryProgress(
+        pending.id,
+        pending.session.session_id,
+        pollToken,
+      ).catch(() => {
+        callbacksRef.current.onPollingSettled();
+      });
+      return;
+    }
+    if (pending.messageRun?.status === "running") {
+      void pollMessageRun(
+        pending.id,
+        pending.userEntryId,
+        pending.messageRun.message_run_id,
+        pollToken,
+      ).catch(() => {
+        callbacksRef.current.onPollingSettled();
+      });
+    }
   }, [thread]);
 
   useEffect(() => {
@@ -106,13 +196,23 @@ export function useQueryPolling({
     pollTokenRef.current += 1;
   }
 
-  function startPolling(pendingId: string, sessionId: string) {
+  function startMessageRunPolling(
+    pendingId: string,
+    userEntryId: string,
+    messageRunId: string,
+  ) {
+    const pollToken = ++pollTokenRef.current;
+    return pollMessageRun(pendingId, userEntryId, messageRunId, pollToken);
+  }
+
+  function startSessionPolling(pendingId: string, sessionId: string) {
     const pollToken = ++pollTokenRef.current;
     return pollQueryProgress(pendingId, sessionId, pollToken);
   }
 
   return {
     cancelPolling,
-    startPolling,
+    startMessageRunPolling,
+    startSessionPolling,
   };
 }

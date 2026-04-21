@@ -43,7 +43,7 @@ export function LandingStage({
         className="landing"
         id="query-input"
         loading={loading}
-        placeholder="What is PDRI maturity?"
+        placeholder="Ask a question or reply"
         query={query}
         onChange={onChangeQuery}
         onSubmit={onSubmitQuery}

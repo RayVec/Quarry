@@ -217,11 +217,30 @@ class VerificationService:
         )
 
     async def score_confidence(self, parsed_sentences: list[ParsedSentence]) -> list[ParsedSentence]:
+        return await self.score_confidence_for_sentences(parsed_sentences)
+
+    async def score_confidence_for_sentences(
+        self,
+        parsed_sentences: list[ParsedSentence],
+        *,
+        sentence_indices: set[int] | None = None,
+    ) -> list[ParsedSentence]:
         logger.info(
             "confidence scoring started",
-            extra={"sentence_count": len(parsed_sentences), "console_visible": False},
+            extra={
+                "sentence_count": len(parsed_sentences),
+                "target_sentence_count": (
+                    len(sentence_indices) if sentence_indices is not None else len(parsed_sentences)
+                ),
+                "console_visible": False,
+            },
         )
-        for sentence in parsed_sentences:
+        targets = (
+            parsed_sentences
+            if sentence_indices is None
+            else [sentence for sentence in parsed_sentences if sentence.sentence_index in sentence_indices]
+        )
+        for sentence in targets:
             if sentence.status in {SentenceStatus.NO_REF, SentenceStatus.UNGROUNDED}:
                 continue
             if sentence.sentence_type == SentenceType.STRUCTURE:

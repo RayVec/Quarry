@@ -1,7 +1,9 @@
 import type {
+  ConversationContextTurn,
   CitationIndexEntry,
   HostedSettingsEnvelope,
   HostedSettingsUpdatePayload,
+  MessageRunEnvelope,
   SessionEnvelope,
 } from "./types";
 
@@ -65,6 +67,25 @@ export const api = {
       method: "PUT",
       body: JSON.stringify(payload),
     });
+  },
+  startMessage(
+    message: string,
+    options?: {
+      contextTurns?: ConversationContextTurn[];
+      latestGroundedSessionId?: string | null;
+    },
+  ) {
+    return request<MessageRunEnvelope>("/messages/start", {
+      method: "POST",
+      body: JSON.stringify({
+        message,
+        context_turns: options?.contextTurns ?? [],
+        latest_grounded_session_id: options?.latestGroundedSessionId ?? null,
+      }),
+    });
+  },
+  getMessageRun(messageRunId: string) {
+    return request<MessageRunEnvelope>(`/message-runs/${messageRunId}`);
   },
   startQuery(query: string) {
     return request<SessionEnvelope>("/query/start", {

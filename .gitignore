@@ -18,6 +18,7 @@ web/vite.config.d.ts
 
 # Data — generated artifacts, logs, and model weights are never committed
 # Use content-level patterns (not directory-level) so .gitkeep files are preserved
+.playwright-cli/
 data/artifacts/*
 !data/artifacts/.gitkeep
 data/logs/*

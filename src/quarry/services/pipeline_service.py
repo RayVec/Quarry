@@ -4,8 +4,10 @@ from collections import Counter
 from uuid import uuid4
 from quarry.adapters.interfaces import ChunkStore
 from quarry.domain.models import (
+    CitationIndexEntry,
     CitationFeedbackType,
     CitationReplacementRequest,
+    CommentIntent,
     ConfidenceLabel,
     FeedbackState,
     GenerationRequest,
@@ -14,9 +16,13 @@ from quarry.domain.models import (
     QueryRequest,
     QueryProgressStage,
     QueryRunStatus,
+    RefinementCommentDecision,
+    RefinementPlan,
+    RefinementScope,
     ResponseMode,
     ReviewWarning,
     RetrievalFilters,
+    resolve_query_stage_descriptor,
     ScopedRetrievalEnvelope,
     SelectionCommentEdit,
     SentenceCitationPair,
@@ -33,6 +39,7 @@ from quarry.pipeline.generation import AnswerGenerator, SentenceRegenerator
 from quarry.pipeline.parsing import has_multiple_natural_sentences, parse_generated_response, render_parsed_sentences
 from quarry.pipeline.retrieval import HybridRetriever, build_citation_index
 from quarry.pipeline.verification import VerificationService
+from quarry.prompts import parse_json_response
 from quarry.services.review_service import ReviewService
 from quarry.services.session_store import SessionStore
 from quarry.services.session_store import SessionNotFoundError
@@ -94,24 +101,44 @@ class PipelineService:
             ambiguity_gap_threshold=ambiguity_gap_threshold,
         )
 
-    def begin_query(self, request: QueryRequest) -> SessionState:
-        session = self._create_base_session(str(uuid4()), request.query)
+    def begin_query(
+        self,
+        request: QueryRequest,
+        *,
+        stage: QueryProgressStage = QueryProgressStage.UNDERSTANDING,
+        label: str | None = None,
+        detail: str | None = None,
+    ) -> SessionState:
+        source_message = request.source_message or request.query
+        session = self._create_base_session(
+            str(uuid4()),
+            source_message,
+            resolved_query=request.query,
+            derived_from_session_id=request.derived_from_session_id,
+        )
+        descriptor = resolve_query_stage_descriptor(stage)
         return self._save_stage(
             session,
             status=QueryRunStatus.RUNNING,
-            stage=QueryProgressStage.UNDERSTANDING,
-            label="Reading your question",
-            detail="I'm getting clear on what you want to know.",
+            stage=stage,
+            label=label or (descriptor.label if descriptor is not None else session.query_stage_label),
+            detail=detail or (descriptor.detail if descriptor is not None else session.query_stage_detail),
         )
 
     async def run_query_for_session(self, session_id: str, request: QueryRequest) -> SessionState:
         try:
             return await self.run_query(request, session_id=session_id)
         except Exception as exc:
+            source_message = request.source_message or request.query
             try:
                 session = self.session_store.get(session_id)
             except SessionNotFoundError:
-                session = self._create_base_session(session_id, request.query)
+                session = self._create_base_session(
+                    session_id,
+                    source_message,
+                    resolved_query=request.query,
+                    derived_from_session_id=request.derived_from_session_id,
+                )
             session.ui_messages.append(
                 UIMessage(
                     level=UIMessageLevel.ERROR,
@@ -138,11 +165,21 @@ class PipelineService:
     async def run_query(self, request: QueryRequest, *, session_id: str | None = None) -> SessionState:
         query_start = timed()
         session_id = session_id or str(uuid4())
+        source_message = request.source_message or request.query
+        resolved_query = request.query
         try:
             base_session = self.session_store.get(session_id)
         except SessionNotFoundError:
-            base_session = self._create_base_session(session_id, request.query)
-        base_session.original_query = request.query
+            base_session = self._create_base_session(
+                session_id,
+                source_message,
+                resolved_query=resolved_query,
+                derived_from_session_id=request.derived_from_session_id,
+            )
+        base_session.original_query = source_message
+        base_session.source_message = source_message
+        base_session.resolved_query = resolved_query
+        base_session.derived_from_session_id = request.derived_from_session_id
         base_session.query_type = None
         base_session.facets = []
         base_session.citation_index = []
@@ -157,7 +194,8 @@ class PipelineService:
             "=== QUERY START ===",
             extra={
                 "session_id": session_id,
-                "query_preview": request.query[:200],
+                "source_message_preview": source_message[:200],
+                "resolved_query_preview": resolved_query[:200],
                 "runtime_mode": self.runtime_mode,
                 "runtime_profile": self.runtime_profile,
             },
@@ -166,23 +204,22 @@ class PipelineService:
             "query received",
             extra={
                 "session_id": session_id,
-                "query": request.query,
-                "query_preview": request.query[:200],
+                "source_message": source_message,
+                "resolved_query": resolved_query,
+                "query_preview": source_message[:200],
                 "runtime_mode": self.runtime_mode,
                 "runtime_profile": self.runtime_profile,
                 "generation_provider": self.generation_provider,
                 "console_visible": False,
             },
         )
-        self._save_stage(
+        self._save_default_stage(
             base_session,
             status=QueryRunStatus.RUNNING,
             stage=QueryProgressStage.UNDERSTANDING,
-            label="Reading your question",
-            detail="I'm getting clear on what you want to know.",
         )
         decomposition_start = timed()
-        decomposition = await self.query_decomposer.decompose(request.query)
+        decomposition = await self.query_decomposer.decompose(resolved_query)
         base_session.query_type = decomposition.query_type
         base_session.facets = decomposition.facets
         logger.info(
@@ -197,15 +234,13 @@ class PipelineService:
         )
 
         retrieval_start = timed()
-        self._save_stage(
+        self._save_default_stage(
             base_session,
             status=QueryRunStatus.RUNNING,
             stage=QueryProgressStage.SEARCHING,
-            label="Looking through the reports",
-            detail="I'm finding the parts of the documents that seem most relevant.",
         )
         retrieved, diagnostics = await self.hybrid_retriever.retrieve(
-            original_query=request.query,
+            original_query=resolved_query,
             facets=decomposition.facets,
             query_type=decomposition.query_type,
         )
@@ -258,15 +293,13 @@ class PipelineService:
             return self.session_store.save(base_session)
 
         generation_citations = self._trim_generation_citations(citation_index, decomposition.query_type)
-        self._save_stage(
+        self._save_default_stage(
             base_session,
             status=QueryRunStatus.RUNNING,
             stage=QueryProgressStage.EVIDENCE,
-            label="Pulling together the best evidence",
-            detail="I'm narrowing down to the passages I trust most for this answer.",
         )
         generation_request = GenerationRequest(
-            original_query=request.query,
+            original_query=source_message,
             facets=decomposition.facets,
             citation_index=generation_citations,
         )
@@ -278,12 +311,10 @@ class PipelineService:
                 "citation_count": len(generation_request.citation_index),
             },
         )
-        self._save_stage(
+        self._save_default_stage(
             base_session,
             status=QueryRunStatus.RUNNING,
             stage=QueryProgressStage.WRITING,
-            label="Writing the answer",
-            detail="I'm turning the evidence into a clear response.",
         )
         raw_response = await self._generate_with_retry(generation_request)
         if raw_response is None:
@@ -321,12 +352,10 @@ class PipelineService:
                 },
             )
             return self.session_store.save(base_session)
-        self._save_stage(
+        self._save_default_stage(
             base_session,
             status=QueryRunStatus.RUNNING,
             stage=QueryProgressStage.CHECKING,
-            label="Checking the answer against the reports",
-            detail="I'm making sure the wording still matches the source text before I show it.",
         )
         final_response, parsed_sentences, citation_index, removed_sentence_count = await self._process_response(
             raw_response,
@@ -334,7 +363,7 @@ class PipelineService:
             session=base_session,
             facets=decomposition.facets,
             query_type=decomposition.query_type,
-            original_query=request.query,
+            original_query=source_message,
         )
         base_session.generated_response = final_response
         base_session.parsed_sentences = parsed_sentences
@@ -441,9 +470,6 @@ class PipelineService:
     async def refine(self, session_id: str) -> SessionState:
         refine_start = timed()
         session = self.session_store.get(session_id)
-        prior_response = session.generated_response
-        working_citations = list(session.citation_index)
-        
         rejected_pairs = [
             SentenceCitationPair(sentence_index=fb.sentence_index, citation_id=fb.citation_id)
             for fb in session.feedback.citation_feedback
@@ -456,11 +482,12 @@ class PipelineService:
             if fb.feedback_type == CitationFeedbackType.LIKE
             and (fb.sentence_index, fb.citation_id) not in rejected_pair_set
         ]
+        replacement_entries = list(session.feedback.citation_replacements)
         rejected_citation_ids = {pair.citation_id for pair in rejected_pairs}
         approved_citation_ids = {pair.citation_id for pair in approved_pairs}
         globally_rejected_citation_ids = sorted(rejected_citation_ids - approved_citation_ids)
-
         selection_comments = [comment for comment in session.feedback.comments if not comment.resolved]
+        comment_targets = self._selection_comment_targets(session)
         logger.info(
             "refinement started",
             extra={
@@ -469,64 +496,155 @@ class PipelineService:
                 "sentence_comment_count": len(selection_comments),
                 "rejected_pairs": len(rejected_pairs),
                 "approved_pairs": len(approved_pairs),
+                "replacement_count": len(replacement_entries),
             },
         )
-        if not selection_comments and not rejected_pairs:
+        if not selection_comments and not rejected_pairs and not replacement_entries:
             logger.info(
                 "refinement no-op",
                 extra={
                     "session_id": session_id,
-                    "reason": "no_comments_or_dislikes",
+                    "reason": "no_comments_dislikes_or_replacements",
                     "approved_pairs": len(approved_pairs),
                 },
             )
             return self.session_store.save(session)
+
+        plan = await self._plan_refinement(
+            session=session,
+            selection_comments=selection_comments,
+            comment_targets=comment_targets,
+            rejected_pairs=rejected_pairs,
+            approved_pairs=approved_pairs,
+            replacement_entries=replacement_entries,
+            globally_rejected_citation_ids=globally_rejected_citation_ids,
+        )
+
+        next_session = session.model_copy(deep=True)
+        next_session.session_id = str(uuid4())
+        next_session.derived_from_session_id = session.session_id
+        next_session.refinement_count = session.refinement_count + 1
+        next_session.refinement_scope = plan.overall_scope
+        next_session.change_summary = plan.change_summary or None
+        next_session.feedback = FeedbackState()
+        next_session.ui_messages = list(session.ui_messages)
+        working_citations = [citation.model_copy(deep=True) for citation in session.citation_index]
+        removed_sentence_count = 0
+        changed_sentence_count = 0
+
         try:
-            step2_rewrites = 0
-            comment_lines = [
-                f'Selected "{comment.text_selection}": {comment.comment_text}'
-                for comment in selection_comments
-            ]
+            if plan.overall_scope == RefinementScope.NONE:
+                next_session.parsed_sentences = [sentence.model_copy(deep=True) for sentence in session.parsed_sentences]
+            elif plan.overall_scope == RefinementScope.LOCAL:
+                next_session.parsed_sentences = [sentence.model_copy(deep=True) for sentence in session.parsed_sentences]
+                hard_sentence_indices = self._hard_refinement_sentence_indices(
+                    rejected_pairs=rejected_pairs,
+                    replacement_entries=replacement_entries,
+                )
+                revision_notes = self._revision_notes_by_sentence(
+                    session=session,
+                    comment_targets=comment_targets,
+                    rejected_pairs=rejected_pairs,
+                    replacement_entries=replacement_entries,
+                )
+                target_sentence_indices = self._resolve_refinement_targets(
+                    plan=plan,
+                    comment_targets=comment_targets,
+                    rejected_pairs=rejected_pairs,
+                    replacement_entries=replacement_entries,
+                )
+                changed_indices: set[int] = set()
+                eligible_citations = [
+                    citation
+                    for citation in working_citations
+                    if citation.citation_id not in globally_rejected_citation_ids
+                ]
 
-            citations_for_refinement = [
-                c for c in working_citations if c.citation_id not in globally_rejected_citation_ids
-            ]
+                for sentence_index in target_sentence_indices:
+                    if not (0 <= sentence_index < len(next_session.parsed_sentences)):
+                        continue
+                    original_sentence = next_session.parsed_sentences[sentence_index]
+                    refine_request = self.sentence_regenerator.refine(
+                        original_sentence,
+                        eligible_citations,
+                        revision_note=revision_notes.get(sentence_index, "Please refine this sentence conservatively."),
+                    )
+                    refined_raw = await self._generate_with_retry(refine_request)
+                    replacement_sentence = None
+                    if refined_raw is not None:
+                        replacement_sentence = self._select_regeneration_replacement(
+                            parse_generated_response(refined_raw)
+                        )
+                    if replacement_sentence is None and sentence_index in hard_sentence_indices:
+                        fallback_raw = self.sentence_regenerator.deterministic_rewrite(
+                            original_sentence,
+                            eligible_citations,
+                        )
+                        replacement_sentence = self._select_regeneration_replacement(
+                            parse_generated_response(fallback_raw)
+                        )
+                    if replacement_sentence is None:
+                        continue
+                    if (
+                        replacement_sentence.sentence_text == original_sentence.sentence_text
+                        and sentence_index not in hard_sentence_indices
+                    ):
+                        continue
+                    replacement_sentence.sentence_index = sentence_index
+                    replacement_sentence.paragraph_index = original_sentence.paragraph_index
+                    next_session.parsed_sentences[sentence_index] = replacement_sentence
+                    changed_indices.add(sentence_index)
 
-            refine_request = GenerationRequest(
-                original_query=session.original_query,
-                facets=session.facets,
-                citation_index=self._trim_citations_to_budget(
-                    citations_for_refinement,
-                    prioritized_citation_ids={pair.citation_id for pair in approved_pairs},
-                ),
-                mode="refinement",
-                existing_response=render_parsed_sentences(session.parsed_sentences),
-                selection_comments=[
-                    comment.model_copy(deep=True) for comment in selection_comments
-                ],
-                disagreement_notes=comment_lines,
-                disagreement_contexts=[],
-                mismatch_citation_ids=globally_rejected_citation_ids,
-                approved_pairs=approved_pairs,
-                rejected_pairs=rejected_pairs,
-            )
-            self._check_refinement_prompt_budget(refine_request, session.parsed_sentences)
-            refined_raw = await self._generate_with_retry(refine_request)
-            if refined_raw is not None:
-                next_sentences = parse_generated_response(refined_raw)
-                changed_indices = self._diff_changed_sentence_indices(session.parsed_sentences, next_sentences)
-                session.parsed_sentences = next_sentences
                 if changed_indices:
-                    session.parsed_sentences, working_citations = await self._verify_and_reindex_changed_sentences(
-                        session.parsed_sentences,
+                    next_session.parsed_sentences, working_citations = await self._verify_and_reindex_changed_sentences(
+                        next_session.parsed_sentences,
                         working_citations,
                         changed_indices,
                     )
-                    step2_rewrites = len(changed_indices)
-
-            step3_additions = 0
+                    changed_sentence_count = len(changed_indices)
+                else:
+                    next_session.refinement_scope = RefinementScope.NONE
+            else:
+                comment_lines = self._format_refinement_comment_lines(selection_comments, comment_targets)
+                citations_for_refinement = [
+                    citation
+                    for citation in working_citations
+                    if citation.citation_id not in globally_rejected_citation_ids
+                ]
+                refine_request = GenerationRequest(
+                    original_query=session.original_query,
+                    facets=session.facets,
+                    citation_index=self._trim_citations_to_budget(
+                        citations_for_refinement,
+                        prioritized_citation_ids={pair.citation_id for pair in approved_pairs},
+                    ),
+                    mode="refinement",
+                    existing_response=render_parsed_sentences(session.parsed_sentences),
+                    selection_comments=[comment.model_copy(deep=True) for comment in selection_comments],
+                    disagreement_notes=comment_lines,
+                    disagreement_contexts=[],
+                    mismatch_citation_ids=globally_rejected_citation_ids,
+                    approved_pairs=approved_pairs,
+                    rejected_pairs=rejected_pairs,
+                    planned_refinement_scope=RefinementScope.GLOBAL,
+                    target_sentence_indices=plan.target_sentence_indices,
+                )
+                self._check_refinement_prompt_budget(refine_request, session.parsed_sentences)
+                refined_raw = await self._generate_with_retry(refine_request)
+                if refined_raw is None:
+                    raise RuntimeError("refinement failed")
+                next_session.parsed_sentences = parse_generated_response(refined_raw)
+                verification = self.verifier.verify_exact_matches(
+                    next_session.parsed_sentences,
+                    list(working_citations),
+                )
+                next_session.parsed_sentences = verification.parsed_sentences
+                working_citations = verification.citation_index
+                next_session.parsed_sentences = await self.verifier.score_confidence(
+                    next_session.parsed_sentences
+                )
+                changed_sentence_count = len(next_session.parsed_sentences)
         except Exception:
-            session.generated_response = prior_response
             session.ui_messages.append(
                 UIMessage(
                     level=UIMessageLevel.ERROR,
@@ -540,28 +658,31 @@ class PipelineService:
             )
             return self.session_store.save(session)
 
-        session.parsed_sentences, removed_sentence_count = self._apply_lingering_grounding_policy(session.parsed_sentences)
-        self._reanchor_selection_comments(session)
-        self._annotate_match_quality(session.parsed_sentences)
-        session.generated_response = render_parsed_sentences(session.parsed_sentences)
-        session.citation_index = working_citations
-        session.removed_ungrounded_claim_count = removed_sentence_count
-        session.feedback = FeedbackState()
-        session.refinement_count += 1
-        session.response_mode = self._determine_response_mode(session.parsed_sentences)
+        next_session.parsed_sentences, removed_sentence_count = self._apply_lingering_grounding_policy(
+            next_session.parsed_sentences
+        )
+        self._annotate_match_quality(next_session.parsed_sentences)
+        next_session.generated_response = render_parsed_sentences(next_session.parsed_sentences)
+        next_session.citation_index = working_citations
+        next_session.removed_ungrounded_claim_count = removed_sentence_count
+        next_session.response_mode = self._determine_response_mode(next_session.parsed_sentences)
         summary_parts: list[str] = []
-        if step2_rewrites:
-            summary_parts.append(f"rewrote {step2_rewrites} sentences")
+        if next_session.change_summary:
+            summary_parts.append(next_session.change_summary)
+        if changed_sentence_count and next_session.refinement_scope == RefinementScope.LOCAL:
+            summary_parts.append(f"Updated {changed_sentence_count} sentence{'s' if changed_sentence_count != 1 else ''}.")
+        if next_session.refinement_scope == RefinementScope.GLOBAL:
+            summary_parts.append("Applied a broader answer revision.")
         if summary_parts:
-            session.ui_messages.append(
+            next_session.ui_messages.append(
                 UIMessage(
                     level=UIMessageLevel.INFO,
                     code="refine_summary",
-                    message=", ".join(summary_parts).capitalize() + ".",
+                    message=" ".join(part.strip() for part in summary_parts if part.strip()),
                 )
             )
         if removed_sentence_count:
-            session.ui_messages.append(
+            next_session.ui_messages.append(
                 UIMessage(
                     level=UIMessageLevel.WARNING,
                     code="removed_unverified_claims",
@@ -571,14 +692,346 @@ class PipelineService:
         logger.info(
             "refinement complete",
             extra={
-                "session_id": session_id,
-                "response_mode": session.response_mode.value,
-                "sentence_summary": self._sentence_status_summary(session.parsed_sentences),
+                "session_id": next_session.session_id,
+                "derived_from_session_id": session.session_id,
+                "response_mode": next_session.response_mode.value,
+                "refinement_scope": next_session.refinement_scope.value if next_session.refinement_scope else None,
+                "sentence_summary": self._sentence_status_summary(next_session.parsed_sentences),
                 "citation_count": len(working_citations),
                 "latency_ms": elapsed_ms(refine_start),
             },
         )
-        return self.session_store.save(session)
+        return self.session_store.save(next_session)
+
+    async def _plan_refinement(
+        self,
+        *,
+        session: SessionState,
+        selection_comments: list,
+        comment_targets: dict[str, list[int]],
+        rejected_pairs: list[SentenceCitationPair],
+        approved_pairs: list[SentenceCitationPair],
+        replacement_entries: list,
+        globally_rejected_citation_ids: list[int],
+    ) -> RefinementPlan:
+        disagreement_notes = self._format_refinement_comment_lines(selection_comments, comment_targets)
+        planning_request = GenerationRequest(
+            original_query=session.original_query,
+            facets=session.facets,
+            citation_index=self._trim_citations_to_budget(list(session.citation_index)),
+            mode="refinement_planning",
+            existing_response=render_parsed_sentences(session.parsed_sentences),
+            selection_comments=[comment.model_copy(deep=True) for comment in selection_comments],
+            disagreement_notes=disagreement_notes,
+            mismatch_citation_ids=globally_rejected_citation_ids,
+            approved_pairs=approved_pairs,
+            rejected_pairs=rejected_pairs,
+            target_sentence_indices=sorted(
+                {
+                    sentence_index
+                    for indices in comment_targets.values()
+                    for sentence_index in indices
+                }
+            ),
+        )
+        try:
+            raw_plan = await self.answer_generator.generate(planning_request)
+            payload = parse_json_response(raw_plan)
+            return self._refinement_plan_from_payload(
+                payload,
+                selection_comments=selection_comments,
+                comment_targets=comment_targets,
+                rejected_pairs=rejected_pairs,
+                replacement_entries=replacement_entries,
+            )
+        except Exception:
+            return self._fallback_refinement_plan(
+                selection_comments=selection_comments,
+                comment_targets=comment_targets,
+                rejected_pairs=rejected_pairs,
+                replacement_entries=replacement_entries,
+            )
+
+    def _selection_comment_targets(self, session: SessionState) -> dict[str, list[int]]:
+        sentence_ranges = self._sentence_ranges(session.parsed_sentences)
+        targets: dict[str, list[int]] = {}
+        for comment in session.feedback.comments:
+            matched_indices = [
+                sentence_index
+                for sentence_index, (start, end) in sentence_ranges.items()
+                if comment.char_start < end and comment.char_end > start
+            ]
+            if not matched_indices and comment.text_selection.strip():
+                selection = comment.text_selection.strip()
+                matched_indices = [
+                    sentence.sentence_index
+                    for sentence in session.parsed_sentences
+                    if selection in sentence.sentence_text
+                ]
+            targets[comment.comment_id] = matched_indices
+        return targets
+
+    def _sentence_ranges(self, parsed_sentences: list[ParsedSentence]) -> dict[int, tuple[int, int]]:
+        ranges: dict[int, tuple[int, int]] = {}
+        cursor = 0
+        for sentence in parsed_sentences:
+            start = cursor
+            end = start + len(sentence.sentence_text)
+            ranges[sentence.sentence_index] = (start, end)
+            cursor = end + 1
+        return ranges
+
+    def _format_refinement_comment_lines(self, selection_comments: list, comment_targets: dict[str, list[int]]) -> list[str]:
+        lines: list[str] = []
+        for comment in selection_comments:
+            target_indices = comment_targets.get(comment.comment_id, [])
+            target_label = (
+                f"Suggested sentence indices: {', '.join(str(index) for index in target_indices)}. "
+                if target_indices
+                else ""
+            )
+            lines.append(
+                f'Selected "{comment.text_selection}": {comment.comment_text} {target_label}'.strip()
+            )
+        return lines
+
+    def _refinement_plan_from_payload(
+        self,
+        payload: dict[str, object],
+        *,
+        selection_comments: list,
+        comment_targets: dict[str, list[int]],
+        rejected_pairs: list[SentenceCitationPair],
+        replacement_entries: list,
+    ) -> RefinementPlan:
+        comment_by_id = {comment.comment_id: comment for comment in selection_comments}
+        comment_payloads = payload.get("comments", [])
+        decisions: list[RefinementCommentDecision] = []
+        for raw in comment_payloads if isinstance(comment_payloads, list) else []:
+            if not isinstance(raw, dict):
+                continue
+            comment_id = str(raw.get("comment_id", "")).strip()
+            if not comment_id or comment_id not in comment_by_id:
+                continue
+            intent = self._coerce_comment_intent(raw.get("intent"))
+            scope = self._coerce_refinement_scope(raw.get("scope"))
+            raw_targets = raw.get("target_sentence_indices", [])
+            target_sentence_indices = [
+                int(value)
+                for value in raw_targets
+                if isinstance(value, int) or (isinstance(value, str) and value.isdigit())
+            ]
+            if not target_sentence_indices:
+                target_sentence_indices = comment_targets.get(comment_id, [])
+            decisions.append(
+                RefinementCommentDecision(
+                    comment_id=comment_id,
+                    intent=intent,
+                    scope=scope,
+                    target_sentence_indices=target_sentence_indices,
+                    summary=str(raw.get("summary", "")).strip(),
+                )
+            )
+
+        default_targets = sorted(
+            {
+                sentence_index
+                for decision in decisions
+                for sentence_index in decision.target_sentence_indices
+            }
+        )
+        if not default_targets:
+            default_targets = sorted(
+                {
+                    sentence_index
+                    for indices in comment_targets.values()
+                    for sentence_index in indices
+                }
+            )
+        overall_scope = self._coerce_refinement_scope(payload.get("overall_scope"))
+        if rejected_pairs or replacement_entries:
+            if overall_scope == RefinementScope.NONE:
+                overall_scope = RefinementScope.LOCAL
+        if decisions and overall_scope == RefinementScope.NONE:
+            if any(decision.scope == RefinementScope.GLOBAL for decision in decisions):
+                overall_scope = RefinementScope.GLOBAL
+            elif any(decision.scope == RefinementScope.LOCAL for decision in decisions):
+                overall_scope = RefinementScope.LOCAL
+        return RefinementPlan(
+            overall_scope=overall_scope,
+            comment_decisions=decisions,
+            target_sentence_indices=self._unique_sorted_indices(
+                [
+                    *default_targets,
+                    *[pair.sentence_index for pair in rejected_pairs],
+                    *[entry.sentence_index for entry in replacement_entries],
+                ]
+            ),
+            change_summary=str(payload.get("change_summary", "")).strip(),
+        )
+
+    def _fallback_refinement_plan(
+        self,
+        *,
+        selection_comments: list,
+        comment_targets: dict[str, list[int]],
+        rejected_pairs: list[SentenceCitationPair],
+        replacement_entries: list,
+    ) -> RefinementPlan:
+        decisions: list[RefinementCommentDecision] = []
+        overall_scope = RefinementScope.NONE
+        for comment in selection_comments:
+            intent, scope = self._heuristic_comment_intent(comment.comment_text)
+            decisions.append(
+                RefinementCommentDecision(
+                    comment_id=comment.comment_id,
+                    intent=intent,
+                    scope=scope,
+                    target_sentence_indices=comment_targets.get(comment.comment_id, []),
+                    summary=comment.comment_text.strip(),
+                )
+            )
+            if scope == RefinementScope.GLOBAL:
+                overall_scope = RefinementScope.GLOBAL
+            elif scope == RefinementScope.LOCAL and overall_scope != RefinementScope.GLOBAL:
+                overall_scope = RefinementScope.LOCAL
+        if (rejected_pairs or replacement_entries) and overall_scope == RefinementScope.NONE:
+            overall_scope = RefinementScope.LOCAL
+        if overall_scope == RefinementScope.NONE:
+            change_summary = "Reviewer feedback affirmed the current answer."
+        elif overall_scope == RefinementScope.LOCAL:
+            change_summary = "Reviewer feedback called for a localized revision."
+        else:
+            change_summary = "Reviewer feedback required a broader rewrite."
+        return RefinementPlan(
+            overall_scope=overall_scope,
+            comment_decisions=decisions,
+            target_sentence_indices=self._unique_sorted_indices(
+                [
+                    *[
+                        sentence_index
+                        for indices in comment_targets.values()
+                        for sentence_index in indices
+                    ],
+                    *[pair.sentence_index for pair in rejected_pairs],
+                    *[entry.sentence_index for entry in replacement_entries],
+                ]
+            ),
+            change_summary=change_summary,
+        )
+
+    def _heuristic_comment_intent(self, comment_text: str) -> tuple[CommentIntent, RefinementScope]:
+        lowered = comment_text.strip().lower()
+        if any(
+            marker in lowered
+            for marker in (
+                "this is good",
+                "looks good",
+                "good answer",
+                "perfectly aligned",
+                "aligned",
+                "agree with this",
+                "this works",
+            )
+        ):
+            return CommentIntent.AFFIRMATION, RefinementScope.NONE
+        if any(
+            marker in lowered
+            for marker in ("rewrite", "restructure", "reorganize", "reframe", "main structure", "overall answer")
+        ):
+            return CommentIntent.REWRITE_REQUEST, RefinementScope.GLOBAL
+        if any(
+            marker in lowered
+            for marker in ("clarify", "tighten", "add", "detail", "revise", "explain", "adjust")
+        ):
+            return CommentIntent.MINOR_EDIT, RefinementScope.LOCAL
+        return CommentIntent.SUBSTANTIVE_EDIT, RefinementScope.LOCAL
+
+    def _coerce_comment_intent(self, raw_value: object) -> CommentIntent:
+        normalized = str(raw_value or "").strip().lower()
+        mapping = {
+            "affirmation": CommentIntent.AFFIRMATION,
+            "minor_edit": CommentIntent.MINOR_EDIT,
+            "substantive_edit": CommentIntent.SUBSTANTIVE_EDIT,
+            "rewrite_request": CommentIntent.REWRITE_REQUEST,
+        }
+        return mapping.get(normalized, CommentIntent.SUBSTANTIVE_EDIT)
+
+    def _coerce_refinement_scope(self, raw_value: object) -> RefinementScope:
+        normalized = str(raw_value or "").strip().lower()
+        mapping = {
+            "none": RefinementScope.NONE,
+            "no_change": RefinementScope.NONE,
+            "local": RefinementScope.LOCAL,
+            "local_edit": RefinementScope.LOCAL,
+            "global": RefinementScope.GLOBAL,
+            "global_rewrite": RefinementScope.GLOBAL,
+        }
+        return mapping.get(normalized, RefinementScope.NONE)
+
+    def _resolve_refinement_targets(
+        self,
+        *,
+        plan: RefinementPlan,
+        comment_targets: dict[str, list[int]],
+        rejected_pairs: list[SentenceCitationPair],
+        replacement_entries: list,
+    ) -> list[int]:
+        return self._unique_sorted_indices(
+            [
+                *plan.target_sentence_indices,
+                *[
+                    sentence_index
+                    for decision in plan.comment_decisions
+                    for sentence_index in decision.target_sentence_indices
+                ],
+                *[
+                    sentence_index
+                    for indices in comment_targets.values()
+                    for sentence_index in indices
+                ],
+                *[pair.sentence_index for pair in rejected_pairs],
+                *[entry.sentence_index for entry in replacement_entries],
+            ]
+        )
+
+    def _revision_notes_by_sentence(
+        self,
+        *,
+        session: SessionState,
+        comment_targets: dict[str, list[int]],
+        rejected_pairs: list[SentenceCitationPair],
+        replacement_entries: list,
+    ) -> dict[int, str]:
+        notes: dict[int, list[str]] = {}
+        for comment in session.feedback.comments:
+            if comment.resolved:
+                continue
+            for sentence_index in comment_targets.get(comment.comment_id, []):
+                notes.setdefault(sentence_index, []).append(comment.comment_text.strip())
+        for pair in rejected_pairs:
+            notes.setdefault(pair.sentence_index, []).append(
+                "The reviewer rejected one or more citations supporting this sentence. Rewrite it using only remaining supported evidence."
+            )
+        for entry in replacement_entries:
+            notes.setdefault(entry.sentence_index, []).append(
+                "A citation replacement is pending for this sentence. Prefer the updated supporting evidence."
+            )
+        return {index: " ".join(parts).strip() for index, parts in notes.items()}
+
+    def _hard_refinement_sentence_indices(
+        self,
+        *,
+        rejected_pairs: list[SentenceCitationPair],
+        replacement_entries: list,
+    ) -> set[int]:
+        return {
+            *[pair.sentence_index for pair in rejected_pairs],
+            *[entry.sentence_index for entry in replacement_entries],
+        }
+
+    def _unique_sorted_indices(self, values: list[int]) -> list[int]:
+        return sorted({value for value in values if isinstance(value, int) and value >= 0})
 
     def _reanchor_selection_comments(self, session: SessionState) -> None:
         if not session.feedback.comments:
@@ -681,12 +1134,10 @@ class PipelineService:
                 },
             )
             if coverage.trigger_followup:
-                self._save_stage(
+                self._save_default_stage(
                     session,
                     status=QueryRunStatus.RUNNING,
                     stage=QueryProgressStage.COVERAGE_CHECK,
-                    label="Checking evidence coverage",
-                    detail="I'm checking whether each facet is supported by cited evidence.",
                 )
                 score_floor = self._relative_score_floor(updated_citations)
                 followup_facet = self._select_followup_facet(
@@ -695,12 +1146,10 @@ class PipelineService:
                     score_floor=score_floor,
                 )
                 if followup_facet:
-                    self._save_stage(
+                    self._save_default_stage(
                         session,
                         status=QueryRunStatus.RUNNING,
                         stage=QueryProgressStage.FOLLOWUP_RETRIEVAL,
-                        label="Retrieving additional evidence",
-                        detail="I'm pulling in more evidence for an uncovered facet.",
                     )
                     followup_passages, _diagnostic = await self.hybrid_retriever.retrieve_followup(
                         original_query=original_query,
@@ -989,10 +1438,20 @@ class PipelineService:
                 break
         return selected
 
-    def _create_base_session(self, session_id: str, original_query: str) -> SessionState:
+    def _create_base_session(
+        self,
+        session_id: str,
+        original_query: str,
+        *,
+        resolved_query: str | None = None,
+        derived_from_session_id: str | None = None,
+    ) -> SessionState:
         session = SessionState(
             session_id=session_id,
             original_query=original_query,
+            source_message=original_query,
+            resolved_query=resolved_query or original_query,
+            derived_from_session_id=derived_from_session_id,
             generation_provider=self.generation_provider,
             parser_provider=self.parser_provider,
             runtime_mode=self.runtime_mode,
@@ -1016,6 +1475,24 @@ class PipelineService:
         session.query_stage_label = label
         session.query_stage_detail = detail
         return self.session_store.save(session)
+
+    def _save_default_stage(
+        self,
+        session: SessionState,
+        *,
+        status: QueryRunStatus,
+        stage: QueryProgressStage,
+    ) -> SessionState:
+        descriptor = resolve_query_stage_descriptor(stage)
+        if descriptor is None:
+            raise ValueError(f"Missing query stage descriptor for {stage.value}")
+        return self._save_stage(
+            session,
+            status=status,
+            stage=stage,
+            label=descriptor.label,
+            detail=descriptor.detail,
+        )
 
     def _determine_response_mode(self, parsed_sentences: list) -> ResponseMode:
         visible_claims = [sentence for sentence in parsed_sentences if sentence.sentence_type == SentenceType.CLAIM]
@@ -1124,7 +1601,10 @@ class PipelineService:
         )
         verified_sentences = verification.parsed_sentences
         verified_citations = verification.citation_index
-        scored_sentences = await self.verifier.score_confidence(verified_sentences)
+        scored_sentences = await self.verifier.score_confidence_for_sentences(
+            verified_sentences,
+            sentence_indices=changed_indices,
+        )
         for index, sentence in enumerate(scored_sentences):
             sentence.sentence_index = index
         return scored_sentences, verified_citations

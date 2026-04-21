@@ -396,7 +396,48 @@ def test_begin_query_creates_running_session_with_initial_stage() -> None:
     assert session.query_status == QueryRunStatus.RUNNING
     assert session.query_stage == QueryProgressStage.UNDERSTANDING
     assert session.query_stage_label == "Reading your question"
+    assert [stage.key for stage in session.query_stage_catalog[:3]] == [
+        QueryProgressStage.ORCHESTRATING,
+        QueryProgressStage.UNDERSTANDING,
+        QueryProgressStage.SEARCHING,
+    ]
     assert service.get_session(session.session_id).session_id == session.session_id
+
+
+def test_begin_query_uses_backend_stage_defaults_for_orchestration() -> None:
+    chunk_store = InMemoryChunkStore(build_chunks())
+    service = PipelineService(
+        chunk_store=chunk_store,
+        query_decomposer=QueryDecomposer(HeuristicDecompositionClient(), max_facets=4),
+        hybrid_retriever=HybridRetriever(
+            sparse_retriever=KeywordSparseRetriever(chunk_store),
+            dense_retriever=SemanticDenseRetriever(chunk_store),
+            reranker=SimpleCrossEncoderReranker(),
+            sparse_top_k=30,
+            dense_top_k=30,
+            rerank_top_k=20,
+            rrf_k=60,
+        ),
+        answer_generator=AnswerGenerator(DeterministicGenerationClient()),
+        sentence_regenerator=SentenceRegenerator(),
+        verifier=VerificationService(chunk_store=chunk_store, nli_client=HeuristicNLIClient()),
+        session_store=SessionStore(),
+        scoped_top_k=3,
+        refinement_token_budget=8000,
+        ambiguity_gap_threshold=0.05,
+    )
+
+    session = service.begin_query(
+        QueryRequest(query="Say more about that."),
+        stage=QueryProgressStage.ORCHESTRATING,
+    )
+
+    assert session.query_stage == QueryProgressStage.ORCHESTRATING
+    assert session.query_stage_label == "Deciding whether to search"
+    assert (
+        session.query_stage_detail
+        == "I'm deciding whether this needs report search or a direct response."
+    )
 
 
 def test_pipeline_assigns_partial_match_quality_for_partial_confidence() -> None:
@@ -1054,6 +1095,49 @@ def test_refine_is_noop_when_only_likes_exist() -> None:
     assert len([request for request in generator.requests if request.mode == "refinement"]) == 0
 
 
+def test_refine_with_positive_comment_creates_new_session_without_rewriting() -> None:
+    chunk = build_regeneration_chunk()
+    chunk_store = InMemoryChunkStore([chunk])
+    retriever = StaticHybridRetriever(
+        [RetrievedPassage(chunk=chunk, score=0.9, source_facet="What is PDRI maturity?", rank=1, retriever="reranked")]
+    )
+    generator = PassThroughRefineGenerationClient()
+    service = PipelineService(
+        chunk_store=chunk_store,
+        query_decomposer=QueryDecomposer(HeuristicDecompositionClient(), max_facets=4),
+        hybrid_retriever=retriever,
+        answer_generator=AnswerGenerator(generator),
+        sentence_regenerator=SentenceRegenerator(),
+        verifier=VerificationService(chunk_store=chunk_store, nli_client=HeuristicNLIClient()),
+        session_store=SessionStore(),
+        scoped_top_k=3,
+        refinement_token_budget=8000,
+        ambiguity_gap_threshold=0.05,
+    )
+
+    session = asyncio.run(service.run_query(QueryRequest(query="What is PDRI maturity?")))
+    session = service.add_review_comment(
+        session.session_id,
+        ReviewCommentRequest(
+            text_selection="PDRI maturity",
+            char_start=0,
+            char_end=13,
+            comment_text="I think this is good.",
+        ),
+    )
+
+    refined = asyncio.run(service.refine(session.session_id))
+
+    assert refined.session_id != session.session_id
+    assert refined.derived_from_session_id == session.session_id
+    assert refined.generated_response == session.generated_response
+    assert refined.refinement_scope.value == "none"
+    assert refined.feedback.comments == []
+    assert refined.removed_ungrounded_claim_count == 0
+    planning_requests = [request for request in generator.requests if request.mode == "refinement_planning"]
+    assert len(planning_requests) == 1
+
+
 def test_refine_request_uses_pair_scoped_feedback_with_dislike_precedence() -> None:
     chunks = build_many_chunks(12)
     chunk_store = InMemoryChunkStore(chunks)
@@ -1092,16 +1176,15 @@ def test_refine_request_uses_pair_scoped_feedback_with_dislike_precedence() -> N
     session = service.set_citation_feedback(session.session_id, 1, 2, CitationFeedbackType.LIKE)
 
     refined = asyncio.run(service.refine(session.session_id))
-    refine_requests = [request for request in generator.requests if request.mode == "refinement"]
+    planning_requests = [request for request in generator.requests if request.mode == "refinement_planning"]
 
     assert refined.refinement_count == 1
-    assert len(refine_requests) == 1
-    refine_request = refine_requests[0]
-    assert {(pair.sentence_index, pair.citation_id) for pair in refine_request.rejected_pairs} == {(0, 1)}
-    assert {(pair.sentence_index, pair.citation_id) for pair in refine_request.approved_pairs} == {(1, 2)}
-    assert refine_request.mismatch_citation_ids == [1]
-    assert all(citation.citation_id != 1 for citation in refine_request.citation_index)
-    assert any(citation.citation_id == 2 for citation in refine_request.citation_index)
+    assert len(planning_requests) == 1
+    planning_request = planning_requests[0]
+    assert {(pair.sentence_index, pair.citation_id) for pair in planning_request.rejected_pairs} == {(0, 1)}
+    assert {(pair.sentence_index, pair.citation_id) for pair in planning_request.approved_pairs} == {(1, 2)}
+    assert planning_request.mismatch_citation_ids == [1]
+    assert any(request.mode == "sentence_refinement" for request in generator.requests)
 
 
 def test_refine_does_not_globally_poison_shared_citation_with_mixed_pair_feedback() -> None:
@@ -1141,9 +1224,9 @@ def test_refine_does_not_globally_poison_shared_citation_with_mixed_pair_feedbac
     session = service.set_citation_feedback(session.session_id, 1, 7, CitationFeedbackType.LIKE)
 
     _refined = asyncio.run(service.refine(session.session_id))
-    refine_request = [request for request in generator.requests if request.mode == "refinement"][0]
+    planning_request = [request for request in generator.requests if request.mode == "refinement_planning"][0]
 
-    assert {(pair.sentence_index, pair.citation_id) for pair in refine_request.rejected_pairs} == {(0, 7)}
-    assert {(pair.sentence_index, pair.citation_id) for pair in refine_request.approved_pairs} == {(1, 7)}
-    assert refine_request.mismatch_citation_ids == []
-    assert any(citation.citation_id == 7 for citation in refine_request.citation_index)
+    assert {(pair.sentence_index, pair.citation_id) for pair in planning_request.rejected_pairs} == {(0, 7)}
+    assert {(pair.sentence_index, pair.citation_id) for pair in planning_request.approved_pairs} == {(1, 7)}
+    assert planning_request.mismatch_citation_ids == []
+    assert any(request.mode == "sentence_refinement" for request in generator.requests)

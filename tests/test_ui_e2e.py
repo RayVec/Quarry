@@ -185,7 +185,7 @@ def test_response_review_dialog_and_feedback_flow(page: Page, web_server) -> Non
     expect(page.get_by_test_id("citation-dialog")).to_be_visible()
     expect(page.locator(".citation-pill.replaced").first).to_be_visible()
 
-    expect(page.get_by_test_id("feedback-summary")).to_contain_text("0 comments captured, 1 citation replacements pending.")
+    expect(page.get_by_test_id("run-refinement")).to_be_enabled()
 
     open_selection_comment_editor(page)
     page.get_by_test_id("selection-comment-input").fill(
@@ -200,7 +200,7 @@ def test_response_review_dialog_and_feedback_flow(page: Page, web_server) -> Non
     edit_input = page.locator("[data-testid^='selection-comment-edit-input-']").first
     edit_input.fill("Updated comment for this highlighted passage.")
     page.locator("[data-testid^='update-selection-comment-']").first.click()
-    expect(page.get_by_test_id("feedback-summary")).to_contain_text("1 comments captured, 1 citation replacements pending.")
+    expect(page.get_by_test_id("run-refinement")).to_be_enabled()
 
 
 def test_unified_refinement_flow(page: Page, web_server) -> None:
@@ -213,10 +213,9 @@ def test_unified_refinement_flow(page: Page, web_server) -> None:
     open_selection_comment_editor(page)
     page.get_by_test_id("selection-comment-input").fill("Please add detail about shutdown planning risks.")
     page.get_by_test_id("save-selection-comment").click()
-    expect(page.get_by_test_id("feedback-summary")).to_contain_text("1 comments captured, 0 citation replacements pending.")
-
     page.get_by_test_id("run-refinement").click()
     expect(page.locator(".thread-message.assistant-message")).to_have_count(2)
+    expect(page.get_by_text("Please refine the previous answer.")).to_be_visible()
 
     open_diagnostics(page)
     assert parse_metric(page.get_by_test_id("status-sentences").inner_text()) > 0

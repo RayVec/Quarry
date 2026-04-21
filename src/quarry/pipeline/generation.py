@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 
 from quarry.adapters.interfaces import GenerationClient
-from quarry.domain.models import CitationIndexEntry, GenerationRequest, ParsedSentence, SentenceType
+from quarry.domain.models import CitationIndexEntry, GenerationRequest, ParsedSentence, RefinementScope, SentenceType
 
 INLINE_REF_PATTERN = re.compile(r"\[(?:REF:[^\]]+|NO_REF)\]")
 
@@ -40,6 +40,25 @@ class SentenceRegenerator:
         if not fallback_text:
             fallback_text = "This sentence could not be grounded in the available evidence."
         return f"[{sentence.sentence_type.value.upper()}] {fallback_text} [NO_REF]"
+
+    def refine(
+        self,
+        sentence: ParsedSentence,
+        citation_index: list[CitationIndexEntry],
+        *,
+        revision_note: str,
+    ) -> GenerationRequest:
+        return GenerationRequest(
+            original_query=sentence.sentence_text,
+            facets=[],
+            citation_index=self._rank_citations(sentence, citation_index),
+            mode="sentence_refinement",
+            planned_refinement_scope=RefinementScope.LOCAL,
+            target_sentence_indices=[sentence.sentence_index],
+            target_sentence_text=sentence.sentence_text,
+            revision_note=revision_note,
+            existing_response=f"[{sentence.sentence_type.value.upper()}] {sentence.sentence_text}",
+        )
 
     def _rank_citations(self, sentence: ParsedSentence, citation_index: list[CitationIndexEntry]) -> list[CitationIndexEntry]:
         return sorted(

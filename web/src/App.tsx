@@ -35,7 +35,7 @@ export default function App() {
     <ThreadActionsProvider value={threadController.threadActions}>
       <div className="app-shell">
         <AppSidebar
-          latestUserQuery={threadController.latestUserQuery}
+          threadTitleQuery={threadController.threadTitleQuery}
           recentResearch={threadController.recentResearch}
           onDeleteRecentResearch={threadController.handleDeleteRecentResearch}
           onNewSearch={handleNewSearch}
@@ -57,7 +57,7 @@ export default function App() {
             <ConversationStage
               dockedComposerOffset={dockedComposerOffset}
               dockedComposerRef={dockedComposerRef}
-              latestUserQuery={threadController.latestUserQuery}
+              threadTitleQuery={threadController.threadTitleQuery}
               loading={threadController.loading}
               onChangeQuery={threadController.setQuery}
               onOpenDiagnostics={() => openWorkspaceDrawer("diagnostics")}

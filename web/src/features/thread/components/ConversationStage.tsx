@@ -10,7 +10,7 @@ import type { ThreadEntry } from "@/features/thread/model";
 interface ConversationStageProps {
   dockedComposerOffset: number;
   dockedComposerRef: Ref<HTMLFormElement>;
-  latestUserQuery: string | null;
+  threadTitleQuery: string | null;
   loading: boolean;
   onChangeQuery: (nextQuery: string) => void;
   onOpenDiagnostics: () => void;
@@ -23,7 +23,7 @@ interface ConversationStageProps {
 export function ConversationStage({
   dockedComposerOffset,
   dockedComposerRef,
-  latestUserQuery,
+  threadTitleQuery,
   loading,
   onChangeQuery,
   onOpenDiagnostics,
@@ -44,8 +44,8 @@ export function ConversationStage({
       <section className="workspace-column" ref={workspaceColumnRef}>
         <div className="thread-intro">
           <div className="thread-intro-copy">
-            <span className="tiny-label">Research Thread</span>
-            <h2>{latestUserQuery ?? "Current analysis"}</h2>
+            <span className="tiny-label">Conversation</span>
+            <h2>{threadTitleQuery ?? "Current discussion"}</h2>
           </div>
           <Button
             className="diagnostics-trigger"
@@ -62,19 +62,20 @@ export function ConversationStage({
             entry.kind === "user" ? (
               <Card className="thread-message user-message" key={entry.id}>
                 <CardContent className="user-query-card-content">
-                  <span className="tiny-label">Query</span>
                   <p>{entry.query}</p>
                 </CardContent>
               </Card>
             ) : entry.kind === "pending-assistant" ? (
-              <PendingConversationMessage key={entry.id} session={entry.session} />
+              <PendingConversationMessage
+                key={entry.id}
+                messageRun={entry.messageRun}
+                session={entry.session}
+              />
             ) : (
               <ConversationMessage
                 key={entry.id}
                 entryId={entry.id}
-                source={entry.source}
-                session={entry.session}
-                interactive={entry.interactive}
+                entry={entry}
               />
             ),
           )}
@@ -86,7 +87,7 @@ export function ConversationStage({
         id="thread-query-input"
         label=""
         loading={loading}
-        placeholder="Ask follow-up questions"
+        placeholder="Ask a question or reply"
         query={query}
         formRef={dockedComposerRef}
         onChange={onChangeQuery}

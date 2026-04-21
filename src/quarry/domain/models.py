@@ -54,6 +54,17 @@ class ResponseMode(str, Enum):
     GENERATION_FAILED = "generation_failed"
 
 
+class ResponseBasis(str, Enum):
+    SOCIAL = "social"
+    THREAD_CONTEXT_ONLY = "thread_context_only"
+    CORPUS_SEARCH = "corpus_search"
+
+
+class ConversationAction(str, Enum):
+    RESPOND = "respond"
+    SEARCH = "search"
+
+
 class QueryRunStatus(str, Enum):
     RUNNING = "running"
     COMPLETED = "completed"
@@ -62,6 +73,7 @@ class QueryRunStatus(str, Enum):
 
 class QueryProgressStage(str, Enum):
     QUEUED = "queued"
+    ORCHESTRATING = "orchestrating"
     UNDERSTANDING = "understanding"
     SEARCHING = "searching"
     EVIDENCE = "evidence"
@@ -71,6 +83,70 @@ class QueryProgressStage(str, Enum):
     CHECKING = "checking"
     COMPLETED = "completed"
     FAILED = "failed"
+
+
+class QueryStageDescriptor(BaseModel):
+    key: QueryProgressStage
+    label: str
+    detail: str
+
+
+VISIBLE_QUERY_PROGRESS_STAGES: tuple[tuple[QueryProgressStage, str, str], ...] = (
+    (
+        QueryProgressStage.ORCHESTRATING,
+        "Deciding whether to search",
+        "I'm deciding whether this needs report search or a direct response.",
+    ),
+    (
+        QueryProgressStage.UNDERSTANDING,
+        "Reading your question",
+        "I'm getting clear on what you want to know.",
+    ),
+    (
+        QueryProgressStage.SEARCHING,
+        "Looking through the reports",
+        "I'm finding the parts of the documents that seem most relevant.",
+    ),
+    (
+        QueryProgressStage.EVIDENCE,
+        "Pulling together the best evidence",
+        "I'm narrowing down to the passages I trust most for this answer.",
+    ),
+    (
+        QueryProgressStage.COVERAGE_CHECK,
+        "Checking evidence coverage",
+        "I'm checking whether each facet is supported by cited evidence.",
+    ),
+    (
+        QueryProgressStage.FOLLOWUP_RETRIEVAL,
+        "Retrieving additional evidence",
+        "I'm pulling in more evidence for an uncovered facet.",
+    ),
+    (
+        QueryProgressStage.WRITING,
+        "Writing the answer",
+        "I'm turning the evidence into a clear response.",
+    ),
+    (
+        QueryProgressStage.CHECKING,
+        "Checking the answer against the reports",
+        "I'm making sure the wording still matches the source text before I show it.",
+    ),
+)
+
+
+def default_query_stage_catalog() -> list[QueryStageDescriptor]:
+    return [
+        QueryStageDescriptor(key=key, label=label, detail=detail)
+        for key, label, detail in VISIBLE_QUERY_PROGRESS_STAGES
+    ]
+
+
+def resolve_query_stage_descriptor(stage: QueryProgressStage) -> QueryStageDescriptor | None:
+    for key, label, detail in VISIBLE_QUERY_PROGRESS_STAGES:
+        if key == stage:
+            return QueryStageDescriptor(key=key, label=label, detail=detail)
+    return None
 
 
 class RuntimeMode(str, Enum):
@@ -96,6 +172,19 @@ class UIMessageLevel(str, Enum):
     INFO = "info"
     WARNING = "warning"
     ERROR = "error"
+
+
+class RefinementScope(str, Enum):
+    NONE = "none"
+    LOCAL = "local"
+    GLOBAL = "global"
+
+
+class CommentIntent(str, Enum):
+    AFFIRMATION = "affirmation"
+    MINOR_EDIT = "minor_edit"
+    SUBSTANTIVE_EDIT = "substantive_edit"
+    REWRITE_REQUEST = "rewrite_request"
 
 
 class ReviewWarning(str, Enum):
@@ -260,6 +349,21 @@ class FeedbackState(BaseModel):
     citation_feedback: list[CitationFeedback] = Field(default_factory=list)
 
 
+class RefinementCommentDecision(BaseModel):
+    comment_id: str
+    intent: CommentIntent
+    scope: RefinementScope
+    target_sentence_indices: list[int] = Field(default_factory=list)
+    summary: str = ""
+
+
+class RefinementPlan(BaseModel):
+    overall_scope: RefinementScope = RefinementScope.NONE
+    comment_decisions: list[RefinementCommentDecision] = Field(default_factory=list)
+    target_sentence_indices: list[int] = Field(default_factory=list)
+    change_summary: str = ""
+
+
 class UIMessage(BaseModel):
     level: UIMessageLevel
     code: str
@@ -295,6 +399,9 @@ class FacetRetrievalDiagnostic(BaseModel):
 class SessionState(BaseModel):
     session_id: str
     original_query: str
+    source_message: str | None = None
+    resolved_query: str | None = None
+    derived_from_session_id: str | None = None
     query_type: QueryType | None = None
     facets: list[str] = Field(default_factory=list)
     citation_index: list[CitationIndexEntry] = Field(default_factory=list)
@@ -302,6 +409,8 @@ class SessionState(BaseModel):
     parsed_sentences: list[ParsedSentence] = Field(default_factory=list)
     feedback: FeedbackState = Field(default_factory=FeedbackState)
     refinement_count: int = 0
+    refinement_scope: RefinementScope | None = None
+    change_summary: str | None = None
     retrieval_diagnostics: list[FacetRetrievalDiagnostic] = Field(default_factory=list)
     ui_messages: list[UIMessage] = Field(default_factory=list)
     removed_ungrounded_claim_count: int = 0
@@ -316,6 +425,7 @@ class SessionState(BaseModel):
     query_stage: QueryProgressStage = QueryProgressStage.QUEUED
     query_stage_label: str = "Getting started"
     query_stage_detail: str = "I'm getting ready to work on your question."
+    query_stage_catalog: list[QueryStageDescriptor] = Field(default_factory=default_query_stage_catalog)
 
 
 class DecompositionResult(BaseModel):
@@ -352,7 +462,14 @@ class GenerationRequest(BaseModel):
     original_query: str
     facets: list[str]
     citation_index: list[CitationIndexEntry]
-    mode: Literal["initial", "supplement", "refinement", "regeneration"] = "initial"
+    mode: Literal[
+        "initial",
+        "supplement",
+        "refinement",
+        "regeneration",
+        "refinement_planning",
+        "sentence_refinement",
+    ] = "initial"
     existing_response: str | None = None
     selected_facets: list[str] = Field(default_factory=list)
     mismatch_citation_ids: list[int] = Field(default_factory=list)
@@ -366,6 +483,10 @@ class GenerationRequest(BaseModel):
     failed_regeneration_response: str | None = None
     max_regeneration_quotes: int = 2
     repair_prior_response: str | None = None
+    planned_refinement_scope: RefinementScope | None = None
+    target_sentence_indices: list[int] = Field(default_factory=list)
+    target_sentence_text: str | None = None
+    revision_note: str | None = None
 
 
 class ScoredReference(BaseModel):
@@ -375,6 +496,50 @@ class ScoredReference(BaseModel):
 
 class QueryRequest(BaseModel):
     query: str = Field(min_length=1)
+    source_message: str | None = None
+    derived_from_session_id: str | None = None
+
+
+class ConversationContextTurn(BaseModel):
+    role: Literal["user", "assistant"]
+    text: str = Field(min_length=1)
+    search_backed: bool = False
+    session_id: str | None = None
+    derived_from_session_id: str | None = None
+
+
+class MessageRequest(BaseModel):
+    message: str = Field(min_length=1)
+    context_turns: list[ConversationContextTurn] = Field(default_factory=list)
+    latest_grounded_session_id: str | None = None
+
+
+class ConversationDecision(BaseModel):
+    action: ConversationAction
+    assistant_text: str | None = None
+    search_query: str | None = None
+    response_basis: ResponseBasis
+    derived_from_session_id: str | None = None
+
+
+class AssistantTurnState(BaseModel):
+    turn_id: str = Field(default_factory=lambda: str(uuid4()))
+    content: str
+    used_search: bool = False
+    response_basis: ResponseBasis
+    linked_session_id: str | None = None
+    derived_from_session_id: str | None = None
+
+
+class MessageRunState(BaseModel):
+    message_run_id: str
+    status: QueryRunStatus = QueryRunStatus.RUNNING
+    stage: QueryProgressStage = QueryProgressStage.ORCHESTRATING
+    stage_label: str = "Deciding whether to search"
+    stage_detail: str = "I'm deciding whether this needs report search or a direct response."
+    stage_catalog: list[QueryStageDescriptor] = Field(default_factory=default_query_stage_catalog)
+    assistant_turn: AssistantTurnState | None = None
+    session: SessionState | None = None
 
 
 class ReviewCommentRequest(BaseModel):
@@ -415,6 +580,10 @@ class ScopedRetrievalEnvelope(BaseModel):
 
 class SessionEnvelope(BaseModel):
     session: SessionState
+
+
+class MessageRunEnvelope(BaseModel):
+    message_run: MessageRunState
 
 
 class HostedModelOption(BaseModel):

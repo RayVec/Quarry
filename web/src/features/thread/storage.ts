@@ -45,11 +45,14 @@ export function loadPersistedThread(
       return [];
     }
 
-    const payload = JSON.parse(raw) as PersistedThreadPayload | ThreadEntry[];
+    const payload = JSON.parse(raw) as
+      | PersistedThreadPayload
+      | { version?: number; thread?: unknown }
+      | ThreadEntry[];
     const maybeThread = Array.isArray(payload)
       ? payload
       : isRecord(payload) &&
-          payload.version === 1 &&
+          (payload.version === 1 || payload.version === 2) &&
           Array.isArray(payload.thread)
         ? payload.thread
         : [];
@@ -74,7 +77,7 @@ export function persistThread(
   }
 
   const payload: PersistedThreadPayload = {
-    version: 1,
+    version: 2,
     thread,
   };
   const serialized = JSON.stringify(payload);
@@ -83,7 +86,7 @@ export function persistThread(
     storage.setItem(
       THREAD_STORAGE_KEY,
       JSON.stringify({
-        version: 1,
+        version: 2,
         thread: compactThread,
       } satisfies PersistedThreadPayload),
     );
@@ -98,7 +101,7 @@ export function persistThread(
       storage.setItem(
         THREAD_STORAGE_KEY,
         JSON.stringify({
-          version: 1,
+          version: 2,
           thread: compactThread,
         } satisfies PersistedThreadPayload),
       );

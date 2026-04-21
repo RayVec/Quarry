@@ -7,7 +7,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from quarry.adapters.in_memory import InMemoryChunkStore
-from quarry.adapters.production import build_runtime_clients
+from quarry.adapters.production import build_hosted_generation_llm, build_runtime_clients
 from quarry.config import Settings
 from quarry.logging_utils import configure_logging, elapsed_ms, logger_with_trace, start_trace, timed
 from quarry.model_cache import configure_model_cache
@@ -15,6 +15,8 @@ from quarry.pipeline.decomposition import QueryDecomposer
 from quarry.pipeline.generation import AnswerGenerator, SentenceRegenerator
 from quarry.pipeline.retrieval import HybridRetriever
 from quarry.pipeline.verification import VerificationService
+from quarry.services.message_service import MessageService
+from quarry.services.message_run_store import MessageRunStore
 from quarry.services.pipeline_service import PipelineService
 from quarry.services.session_store import SessionStore
 
@@ -27,7 +29,7 @@ logger = logger_with_trace(__name__)
 def _is_console_noisy_request(method: str, path: str) -> bool:
     if method != "GET":
         return False
-    return path.startswith("/api/v1/sessions/")
+    return path.startswith("/api/v1/sessions/") or path.startswith("/api/v1/message-runs/")
 
 
 def _cors_origins(settings: Settings) -> list[str]:
@@ -107,14 +109,29 @@ def build_pipeline_service(settings: Settings, *, session_store: SessionStore | 
     return pipeline_service
 
 
+def build_message_service(
+    settings: Settings,
+    *,
+    pipeline_service: PipelineService,
+    message_run_store: MessageRunStore | None = None,
+) -> MessageService:
+    return MessageService(
+        pipeline_service=pipeline_service,
+        orchestration_llm=build_hosted_generation_llm(settings),
+        message_run_store=message_run_store or MessageRunStore(),
+    )
+
+
 def create_app(settings: Settings | None = None, *, config_path: str | None = None) -> FastAPI:
     settings = settings or Settings.from_env(config_path=config_path)
     configure_model_cache(settings)
     configure_logging(settings.artifacts_dir.parent / "logs", enable_file_logs=settings.trace_logs, category="runtime")
     pipeline_service = build_pipeline_service(settings)
+    message_service = build_message_service(settings, pipeline_service=pipeline_service)
 
     app = FastAPI(title=settings.app_name, version="0.2.0")
     app.state.query_tasks: set[asyncio.Task] = set()
+    app.state.message_run_tasks: set[asyncio.Task] = set()
     app.state.background_error_logger = logger
 
     @app.middleware("http")
@@ -171,12 +188,20 @@ def create_app(settings: Settings | None = None, *, config_path: str | None = No
     app.state.settings = settings
     app.state.config_path = config_path
     app.state.pipeline_service = pipeline_service
+    app.state.message_service = message_service
 
     def reconfigure_runtime(next_settings: Settings) -> PipelineService:
         current_service: PipelineService = app.state.pipeline_service
         next_service = build_pipeline_service(next_settings, session_store=current_service.session_store)
+        current_message_service: MessageService = app.state.message_service
+        next_message_service = build_message_service(
+            next_settings,
+            pipeline_service=next_service,
+            message_run_store=current_message_service.message_run_store,
+        )
         app.state.settings = next_settings
         app.state.pipeline_service = next_service
+        app.state.message_service = next_message_service
         return next_service
 
     app.state.reconfigure_runtime = reconfigure_runtime

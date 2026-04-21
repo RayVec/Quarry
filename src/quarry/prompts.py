@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-from quarry.domain.models import ChunkObject, GenerationRequest
+from quarry.domain.models import ChunkObject, ConversationContextTurn, GenerationRequest, SessionState
 
 
 SHARED_SYSTEM_PROMPT = (
@@ -121,7 +121,60 @@ def metadata_enrichment_prompt(chunk: ChunkObject) -> str:
     )
 
 
+def message_orchestration_prompt(
+    *,
+    message: str,
+    context_turns: list[ConversationContextTurn],
+    latest_grounded_session: SessionState | None,
+) -> str:
+    latest_grounded_section = (
+        "## Latest Grounded Answer\n"
+        f"Session ID: {latest_grounded_session.session_id}\n"
+        f"Original user message: {latest_grounded_session.original_query}\n"
+        f"Resolved search query: {latest_grounded_session.resolved_query or latest_grounded_session.original_query}\n"
+        f"Grounded answer:\n{latest_grounded_session.generated_response or '(No grounded answer text was available.)'}"
+        if latest_grounded_session is not None
+        else "## Latest Grounded Answer\n(No grounded answer is currently available in thread context.)"
+    )
+    return (
+        "You are deciding how QUARRY should handle the next user message in an ongoing conversation.\n\n"
+        "Search is available as an internal tool. Prefer search for substantive domain answers.\n"
+        "Use a direct response only when the reply is clearly one of these:\n"
+        "- a social acknowledgement such as thanks, good, okay, or sounds good\n"
+        "- a strict paraphrase, restatement, or simplification of the immediately previous grounded answer\n"
+        "- procedural guidance about the current thread or UI rather than domain facts\n\n"
+        "If there is any meaningful doubt about whether a substantive answer needs fresh evidence, choose search.\n"
+        "Do not answer substantive domain questions from general world knowledge.\n"
+        "If search is unavailable or unnecessary, you may still respond directly when the answer is fully contained in the recent thread context.\n\n"
+        "When action=respond:\n"
+        "- response_basis must be social or thread_context_only\n"
+        "- assistant_text must contain the user-facing reply\n"
+        "- search_query should be empty\n\n"
+        "When action=search:\n"
+        "- response_basis must be corpus_search\n"
+        "- search_query should rewrite the user's request into the best corpus-search query\n"
+        "- assistant_text should be empty\n\n"
+        "Return JSON only with this schema:\n"
+        "{\n"
+        '  "action": "respond" | "search",\n'
+        '  "response_basis": "social" | "thread_context_only" | "corpus_search",\n'
+        '  "assistant_text": "string",\n'
+        '  "search_query": "string",\n'
+        '  "derived_from_session_id": "string or empty"\n'
+        "}\n\n"
+        "## Recent Thread\n"
+        f"{_format_context_turns(context_turns)}\n\n"
+        f"{latest_grounded_section}\n\n"
+        "## New User Message\n"
+        f"{message}\n\n"
+        "The first character of your response must be '{' and there must be no prefix text."
+    )
+
+
 def generation_prompt(request: GenerationRequest) -> str:
+    if request.mode == "refinement_planning":
+        return refinement_planning_prompt(request)
+
     sections: list[str] = [
         (
             "You are preparing a grounded answer for a domain expert.\n"
@@ -222,6 +275,47 @@ def generation_prompt(request: GenerationRequest) -> str:
     return "\n\n".join(section.strip() for section in sections if section.strip())
 
 
+def refinement_planning_prompt(request: GenerationRequest) -> str:
+    existing_response = request.existing_response or "(No existing response was provided.)"
+    reviewer_feedback = _format_reviewer_feedback(request) or "- No reviewer feedback was provided."
+    return (
+        "You are planning a refinement pass for an existing grounded answer.\n\n"
+        "Your job is to decide whether the answer should stay unchanged, receive only a local edit, "
+        "or be rewritten more broadly.\n\n"
+        "Default posture:\n"
+        "- Preserve the answer unless the feedback clearly requires a change.\n"
+        "- Treat praise, agreement, and alignment comments as no-change signals.\n"
+        "- Choose local_edit when only a small portion of the answer needs revision.\n"
+        "- Choose global_rewrite only when the requested change affects the answer structure, "
+        "or when disliked/replaced citations materially change the available support.\n"
+        "- Do not force edits just because a comment exists.\n\n"
+        "## Query\n"
+        f"{request.original_query}\n\n"
+        "## Current Answer\n"
+        f"{existing_response}\n\n"
+        "## Reviewer Feedback\n"
+        f"{reviewer_feedback}\n\n"
+        "## Source Passages\n"
+        f"{_format_passages(request)}\n\n"
+        "Return JSON only with this schema:\n"
+        "{\n"
+        '  "overall_scope": "no_change" | "local_edit" | "global_rewrite",\n'
+        '  "change_summary": "short human summary",\n'
+        '  "comments": [\n'
+        "    {\n"
+        '      "comment_id": "id",\n'
+        '      "intent": "affirmation" | "minor_edit" | "substantive_edit" | "rewrite_request",\n'
+        '      "scope": "no_change" | "local_edit" | "global_rewrite",\n'
+        '      "target_sentence_indices": [0],\n'
+        '      "summary": "short note"\n'
+        "    }\n"
+        "  ],\n"
+        '  "target_sentence_indices": [0]\n'
+        "}\n"
+        "Use empty arrays when no target sentences are needed. The first character of your response must be '{'."
+    )
+
+
 def repair_generation_prompt(request: GenerationRequest, raw_response: str) -> str:
     repaired_request = request.model_copy(update={"repair_prior_response": raw_response.strip()})
     return (
@@ -269,6 +363,25 @@ def _format_citation_line(citation, mismatch_ids: list[int]) -> str:
 
 def with_shared_system_prompt(prompt: str) -> str:
     return f"{SHARED_SYSTEM_PROMPT}\n\n{prompt.strip()}"
+
+
+def _format_context_turns(context_turns: list[ConversationContextTurn]) -> str:
+    if not context_turns:
+        return "- No recent thread turns were provided."
+
+    rendered: list[str] = []
+    for turn in context_turns:
+        role = "User" if turn.role == "user" else "Assistant"
+        qualifiers: list[str] = []
+        if turn.search_backed:
+            qualifiers.append("search-backed")
+        if turn.session_id:
+            qualifiers.append(f"session {turn.session_id}")
+        if turn.derived_from_session_id:
+            qualifiers.append(f"derived from {turn.derived_from_session_id}")
+        qualifier_suffix = f" ({', '.join(qualifiers)})" if qualifiers else ""
+        rendered.append(f"- {role}{qualifier_suffix}: {turn.text}")
+    return "\n".join(rendered)
 
 
 def _format_facets(facets: list[str]) -> str:
@@ -349,22 +462,44 @@ def _format_mode_instruction(request: GenerationRequest) -> str:
         if request.selection_comments:
             selection_comment_instruction = (
                 "\nThe reviewer has highlighted sections of the response and left comments.\n"
-                "Treat each selection comment as a required edit.\n"
+                "Treat comments as natural review feedback, not mandatory rewrites.\n"
                 "Use the selected text span directly to locate what to revise.\n"
-                "You may adjust surrounding wording only when needed for consistency."
+                "Preserve wording, order, and structure by default, and adjust surrounding wording only when needed for consistency."
             )
         return (
             "## Additional Instruction\n"
-            "Regenerate the full response from the current answer context and passages.\n"
+            "Revise the current response from the current answer context and passages.\n"
             "Avoid reliance on flagged passages.\n"
             "Reviewer approval is a positive signal for sentence-citation pairs. If an approved pair\n"
             "is still supported after revision, prefer preserving it. If it is no longer supported,\n"
             "replace or remove it.\n"
+            "If the current response is already aligned with the feedback, preserve it unchanged.\n"
+            "Modify only the minimum supported text needed to satisfy actionable comments.\n"
             "Where the reviewer disagreed with a claim, present both the original\n"
             "evidence and any contradicting evidence. If evidence is insufficient\n"
             "after removing flagged passages, say so rather than citing unsupported\n"
             "sources."
             f"{selection_comment_instruction}"
+        )
+
+    if request.mode == "sentence_refinement" and request.target_sentence_text:
+        revision_note = ""
+        if request.revision_note:
+            revision_note = (
+                "\n\n## Reviewer Note\n"
+                f"{request.revision_note.strip()}\n"
+            )
+        return (
+            "## Sentence Refinement\n"
+            "You are editing one sentence within an already-grounded answer.\n"
+            "Preserve the surrounding answer structure and change only what is necessary.\n"
+            "If the reviewer feedback is affirming or does not require a change, keep the sentence meaning and wording as close as possible.\n"
+            "Return exactly one tagged sentence block for the revised sentence.\n"
+            "Use evidence from the passages above and include a valid [REF: \"exact quote\"] when the sentence makes a factual claim.\n"
+            "If no evidence supports the needed revision, return the sentence with [NO_REF] rather than inventing support.\n\n"
+            "## Current Sentence\n"
+            f"\"{request.target_sentence_text}\"\n"
+            f"{revision_note}"
         )
 
     if request.mode == "regeneration" and request.failed_sentence_text:

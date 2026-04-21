@@ -300,6 +300,18 @@ class HostedGenerationClient(GenerationClient):
             return await self.fallback.generate(request)
 
 
+def build_hosted_generation_llm(settings: Settings) -> CompletionLLM | None:
+    if not settings.use_live_generation or not settings.has_live_generation_credentials:
+        return None
+    if settings.llm_provider == "gemini":
+        return GeminiLLM(api_key=settings.llm_api_key, model=settings.llm_model)
+    return OpenAICompatibleLLM(
+        base_url=settings.llm_base_url,
+        api_key=settings.llm_api_key,
+        model=settings.llm_model,
+    )
+
+
 def build_metadata_enricher(
     settings: Settings,
     *,
@@ -498,18 +510,7 @@ def build_runtime_clients(
         if needs_openai_llm
         else None
     )
-    live_generation_llm: CompletionLLM | None
-    if settings.use_live_generation and settings.has_live_generation_credentials:
-        if settings.llm_provider == "gemini":
-            live_generation_llm = GeminiLLM(api_key=settings.llm_api_key, model=settings.llm_model)
-        else:
-            live_generation_llm = live_openai_llm or OpenAICompatibleLLM(
-                base_url=settings.llm_base_url,
-                api_key=settings.llm_api_key,
-                model=settings.llm_model,
-            )
-    else:
-        live_generation_llm = None
+    live_generation_llm = build_hosted_generation_llm(settings)
 
     logger.info(
         "hosted generation configuration",

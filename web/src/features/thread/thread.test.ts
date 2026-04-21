@@ -1,19 +1,36 @@
 import { describe, expect, it } from "vitest";
-import { resolveActiveCitationContext, normalizeThread, findResumablePendingEntry } from "./model";
 import {
+  buildConversationContextTurns,
+  chatAssistantEntry,
+  deriveRecentResearchFromThread,
+  findResumablePendingEntry,
+  normalizeThread,
+  resolveActiveCitationContext,
+  type ActiveCitationContext,
+  type PendingAssistantThreadEntry,
+  type ResearchAssistantThreadEntry,
+  type ThreadEntry,
+} from "./model";
+import {
+  createThreadControllerState,
   addLocalCommentToThread,
+  appendChatTurnToThread,
+  attachPendingSessionToThread,
+  appendRefinementToThread,
   completePendingSessionInThread,
   deleteThreadComment,
+  threadControllerReducer,
   updateThreadComment,
 } from "./reducer";
+import {
+  getLatestGroundedSessionId,
+  getLatestResearchQuery,
+  getThreadTitleQuery,
+} from "./selectors";
 import type {
-  ActiveCitationContext,
-  AssistantThreadEntry,
-  PendingAssistantThreadEntry,
-  ThreadEntry,
-} from "./model";
-import type {
+  AssistantTurnState,
   CitationIndexEntry,
+  MessageRunState,
   ParsedSentence,
   SessionState,
 } from "@/types";
@@ -73,6 +90,8 @@ function makeSession(overrides: Partial<SessionState> = {}): SessionState {
   return {
     session_id: "session-1",
     original_query: "What is schedule risk?",
+    source_message: "What is schedule risk?",
+    resolved_query: "What is schedule risk?",
     query_type: "single_hop",
     facets: [],
     citation_index: [makeCitation(1)],
@@ -107,10 +126,11 @@ function makeAssistantEntry(
   id: string,
   session: SessionState,
   interactive = true,
-): AssistantThreadEntry {
+): ResearchAssistantThreadEntry {
   return {
     id,
     kind: "assistant",
+    assistantKind: "research",
     source: "query",
     session,
     interactive,
@@ -119,12 +139,45 @@ function makeAssistantEntry(
 
 function makePendingEntry(
   id: string,
-  session: SessionState,
+  session: SessionState | null,
+  overrides: Partial<PendingAssistantThreadEntry> = {},
 ): PendingAssistantThreadEntry {
   return {
     id,
     kind: "pending-assistant",
+    userEntryId: "user-1",
+    messageRun: null,
     session,
+    ...overrides,
+  };
+}
+
+function makeMessageRun(
+  overrides: Partial<MessageRunState> = {},
+): MessageRunState {
+  return {
+    message_run_id: "run-1",
+    status: "running",
+    stage: "orchestrating",
+    stage_label: "Deciding whether to search",
+    stage_detail: "Deciding whether to search.",
+    stage_catalog: [],
+    assistant_turn: null,
+    session: null,
+    ...overrides,
+  };
+}
+
+function makeChatTurn(
+  overrides: Partial<AssistantTurnState> = {},
+): AssistantTurnState {
+  return {
+    turn_id: "turn-1",
+    content: "Understood.",
+    used_search: false,
+    response_basis: "social",
+    derived_from_session_id: "session-a",
+    ...overrides,
   };
 }
 
@@ -136,6 +189,7 @@ describe("thread model and reducer", () => {
         kind: "user",
         query: "How does procurement affect risk?",
         createdAt: "2026-04-17T12:00:00.000Z",
+        researchBacked: true,
       },
       makeAssistantEntry("assistant-1", makeSession({ session_id: "session-a" })),
       makePendingEntry(
@@ -157,7 +211,27 @@ describe("thread model and reducer", () => {
     ).toHaveLength(0);
   });
 
-  it("keeps exactly one interactive assistant when a pending query completes", () => {
+  it("keeps persisted running orchestration runs resumable before a session exists", () => {
+    const persistedThread = normalizeThread([
+      {
+        id: "user-1",
+        kind: "user",
+        query: "good",
+        createdAt: "2026-04-17T12:00:00.000Z",
+        researchBacked: false,
+      },
+      makePendingEntry("pending-1", null, {
+        messageRun: makeMessageRun(),
+      }),
+    ]);
+
+    expect(findResumablePendingEntry(persistedThread)).toMatchObject({
+      id: "pending-1",
+      messageRun: expect.objectContaining({ message_run_id: "run-1" }),
+    });
+  });
+
+  it("keeps exactly one interactive research assistant when a pending query completes", () => {
     const previousAssistant = makeAssistantEntry(
       "assistant-1",
       makeSession({ session_id: "session-a" }),
@@ -168,6 +242,7 @@ describe("thread model and reducer", () => {
         kind: "user",
         query: "How does procurement affect risk?",
         createdAt: "2026-04-17T12:00:00.000Z",
+        researchBacked: true,
       },
       previousAssistant,
       makePendingEntry(
@@ -204,6 +279,35 @@ describe("thread model and reducer", () => {
     ).toMatchObject({ interactive: false });
   });
 
+  it("keeps the latest grounded research answer interactive when a chat turn is appended", () => {
+    const thread: ThreadEntry[] = [
+      {
+        id: "user-1",
+        kind: "user",
+        query: "How does procurement affect risk?",
+        createdAt: "2026-04-17T12:00:00.000Z",
+        researchBacked: true,
+      },
+      makeAssistantEntry("assistant-1", makeSession({ session_id: "session-a" })),
+    ];
+
+    const withChat = appendChatTurnToThread(thread, makeChatTurn());
+
+    expect(withChat.at(-1)).toMatchObject({
+      kind: "assistant",
+      assistantKind: "chat",
+      turn: expect.objectContaining({ content: "Understood." }),
+    });
+    expect(
+      withChat.find(
+        (entry) =>
+          entry.kind === "assistant" &&
+          entry.assistantKind === "research" &&
+          entry.id === "assistant-1",
+      ),
+    ).toMatchObject({ interactive: true });
+  });
+
   it("supports local comment add, update, and delete fallbacks without backend data", () => {
     const thread: ThreadEntry[] = [
       makeAssistantEntry("assistant-1", makeSession({ session_id: "session-a" })),
@@ -219,7 +323,8 @@ describe("thread model and reducer", () => {
 
     const withComment = addLocalCommentToThread(thread, "assistant-1", comment);
     expect(
-      withComment[0].kind === "assistant"
+      withComment[0].kind === "assistant" &&
+        withComment[0].assistantKind === "research"
         ? withComment[0].session.feedback.comments
         : [],
     ).toHaveLength(1);
@@ -231,7 +336,8 @@ describe("thread model and reducer", () => {
       "Updated comment",
     );
     expect(
-      updatedComment[0].kind === "assistant"
+      updatedComment[0].kind === "assistant" &&
+        updatedComment[0].assistantKind === "research"
         ? updatedComment[0].session.feedback.comments[0]?.comment_text
         : null,
     ).toBe("Updated comment");
@@ -242,7 +348,8 @@ describe("thread model and reducer", () => {
       "comment-1",
     );
     expect(
-      withoutComment[0].kind === "assistant"
+      withoutComment[0].kind === "assistant" &&
+        withoutComment[0].assistantKind === "research"
         ? withoutComment[0].session.feedback.comments
         : [],
     ).toHaveLength(0);
@@ -273,5 +380,308 @@ describe("thread model and reducer", () => {
       session: nextSession,
       citation: expect.objectContaining({ citation_id: 2 }),
     });
+  });
+
+  it("appends refinement as a synthetic user turn without replacing the latest real research query", () => {
+    const thread: ThreadEntry[] = [
+      {
+        id: "user-1",
+        kind: "user",
+        query: "How does procurement affect risk?",
+        createdAt: "2026-04-17T12:00:00.000Z",
+        researchBacked: true,
+      },
+      makeAssistantEntry("assistant-1", makeSession({ session_id: "session-a" })),
+    ];
+
+    const refinedThread = appendRefinementToThread(
+      thread,
+      makeSession({
+        session_id: "session-b",
+        derived_from_session_id: "session-a",
+      }),
+      {
+        userQuery: "Please refine the previous answer.",
+        createdAt: "2026-04-17T12:05:00.000Z",
+      },
+    );
+
+    expect(refinedThread.at(-2)).toMatchObject({
+      kind: "user",
+      query: "Please refine the previous answer.",
+      synthetic: true,
+    });
+    expect(getLatestResearchQuery(refinedThread)).toBe(
+      "How does procurement affect risk?",
+    );
+  });
+
+  it("derives recent research only from search-backed user turns", () => {
+    const thread: ThreadEntry[] = [
+      {
+        id: "user-1",
+        kind: "user",
+        query: "What is FEED maturity?",
+        createdAt: "2026-04-17T12:00:00.000Z",
+        researchBacked: true,
+      },
+      makeAssistantEntry("assistant-1", makeSession({ session_id: "session-a" })),
+      {
+        id: "user-2",
+        kind: "user",
+        query: "good",
+        createdAt: "2026-04-17T12:02:00.000Z",
+        researchBacked: false,
+      },
+      chatAssistantEntry("query", makeChatTurn()),
+    ];
+
+    expect(deriveRecentResearchFromThread(thread)).toEqual([
+      {
+        id: "user-1",
+        query: "What is FEED maturity?",
+        createdAt: "2026-04-17T12:00:00.000Z",
+      },
+    ]);
+  });
+
+  it("uses the first real user query as the thread title and recent research title", () => {
+    const thread: ThreadEntry[] = [
+      {
+        id: "user-1",
+        kind: "user",
+        query: "What is FEED maturity?",
+        createdAt: "2026-04-17T12:00:00.000Z",
+        researchBacked: false,
+      },
+      chatAssistantEntry("query", makeChatTurn()),
+      {
+        id: "user-2",
+        kind: "user",
+        query: "Explain more about FEED maturity",
+        createdAt: "2026-04-17T12:05:00.000Z",
+        researchBacked: true,
+      },
+      makeAssistantEntry("assistant-1", makeSession({ session_id: "session-a" })),
+    ];
+
+    expect(getThreadTitleQuery(thread)).toBe("What is FEED maturity?");
+    expect(deriveRecentResearchFromThread(thread)).toEqual([
+      {
+        id: "user-1",
+        query: "What is FEED maturity?",
+        createdAt: "2026-04-17T12:00:00.000Z",
+      },
+    ]);
+  });
+
+  it("keeps a single recent research item when follow-up research happens in the same thread", () => {
+    const state = createThreadControllerState({
+      thread: [
+        {
+          id: "user-1",
+          kind: "user",
+          query: "What is FEED maturity?",
+          createdAt: "2026-04-17T12:00:00.000Z",
+          researchBacked: true,
+        },
+        makeAssistantEntry("assistant-1", makeSession({ session_id: "session-a" })),
+        {
+          id: "user-2",
+          kind: "user",
+          query: "Explain more about FEED maturity",
+          createdAt: "2026-04-17T12:05:00.000Z",
+          researchBacked: false,
+        },
+        makePendingEntry("pending-1", null, {
+          userEntryId: "user-2",
+          messageRun: makeMessageRun(),
+        }),
+      ],
+      recentResearch: [
+        {
+          id: "user-1",
+          query: "What is FEED maturity?",
+          createdAt: "2026-04-17T12:00:00.000Z",
+        },
+      ],
+    });
+
+    const nextState = threadControllerReducer(state, {
+      type: "message/searchStarted",
+      pendingId: "pending-1",
+      userEntryId: "user-2",
+      messageRun: makeMessageRun({
+        session: makeSession({
+          session_id: "session-b",
+          query_status: "running",
+          query_stage: "writing",
+          query_stage_label: "Writing",
+        }),
+      }),
+      session: makeSession({
+        session_id: "session-b",
+        query_status: "running",
+        query_stage: "writing",
+        query_stage_label: "Writing",
+      }),
+    });
+
+    expect(nextState.recentResearch).toEqual([
+      {
+        id: "user-1",
+        query: "What is FEED maturity?",
+        createdAt: "2026-04-17T12:00:00.000Z",
+      },
+    ]);
+  });
+
+  it("builds conversation context turns with both research and chat messages", () => {
+    const thread: ThreadEntry[] = [
+      {
+        id: "user-1",
+        kind: "user",
+        query: "What is FEED maturity?",
+        createdAt: "2026-04-17T12:00:00.000Z",
+        researchBacked: true,
+      },
+      makeAssistantEntry(
+        "assistant-1",
+        makeSession({
+          session_id: "session-a",
+          generated_response: "Grounded answer.",
+        }),
+      ),
+      {
+        id: "user-2",
+        kind: "user",
+        query: "good",
+        createdAt: "2026-04-17T12:02:00.000Z",
+        researchBacked: false,
+      },
+      chatAssistantEntry("query", makeChatTurn()),
+    ];
+
+    expect(buildConversationContextTurns(thread)).toEqual([
+      {
+        role: "user",
+        text: "What is FEED maturity?",
+        search_backed: true,
+        derived_from_session_id: undefined,
+      },
+      {
+        role: "assistant",
+        text: "Grounded answer.",
+        search_backed: true,
+        session_id: "session-a",
+        derived_from_session_id: null,
+      },
+      {
+        role: "user",
+        text: "good",
+        search_backed: false,
+        derived_from_session_id: undefined,
+      },
+      {
+        role: "assistant",
+        text: "Understood.",
+        search_backed: false,
+        session_id: null,
+        derived_from_session_id: "session-a",
+      },
+    ]);
+  });
+
+  it("uses the latest derived grounded session id when the latest turn is chat", () => {
+    const thread: ThreadEntry[] = [
+      {
+        id: "user-1",
+        kind: "user",
+        query: "What is FEED maturity?",
+        createdAt: "2026-04-17T12:00:00.000Z",
+        researchBacked: true,
+      },
+      makeAssistantEntry("assistant-1", makeSession({ session_id: "session-a" })),
+      {
+        id: "user-2",
+        kind: "user",
+        query: "good",
+        createdAt: "2026-04-17T12:02:00.000Z",
+        researchBacked: false,
+      },
+      chatAssistantEntry("query", makeChatTurn()),
+    ];
+
+    expect(getLatestGroundedSessionId(thread)).toBe("session-a");
+  });
+
+  it("marks the triggering user turn as research-backed when search starts", () => {
+    const thread: ThreadEntry[] = [
+      {
+        id: "user-1",
+        kind: "user",
+        query: "Explain FEED maturity",
+        createdAt: "2026-04-17T12:00:00.000Z",
+        researchBacked: false,
+      },
+    ];
+
+    const nextThread = attachPendingSessionToThread(
+      [
+        ...thread,
+        makePendingEntry("pending-1", null),
+      ],
+      "pending-1",
+      "user-1",
+      makeMessageRun(),
+      makeSession({
+        session_id: "session-search",
+        query_status: "running",
+        query_stage: "understanding",
+      }),
+    );
+
+    expect(nextThread[0]).toMatchObject({
+      kind: "user",
+      researchBacked: true,
+    });
+    expect(nextThread.at(-1)).toMatchObject({
+      kind: "pending-assistant",
+      messageRun: expect.objectContaining({ message_run_id: "run-1" }),
+      session: expect.objectContaining({ session_id: "session-search" }),
+    });
+  });
+
+  it("replaces a pending orchestration entry with a chat turn when direct reply completes", () => {
+    const state = createThreadControllerState({
+      thread: [
+        {
+          id: "user-1",
+          kind: "user",
+          query: "good",
+          createdAt: "2026-04-17T12:00:00.000Z",
+          researchBacked: false,
+        },
+        makePendingEntry("pending-1", null, {
+          messageRun: makeMessageRun(),
+        }),
+      ],
+      recentResearch: [],
+    });
+
+    const nextState = threadControllerReducer(state, {
+      type: "message/chatCompleted",
+      pendingId: "pending-1",
+      turn: makeChatTurn({ derived_from_session_id: null }),
+    });
+
+    expect(nextState.thread.at(-1)).toMatchObject({
+      kind: "assistant",
+      assistantKind: "chat",
+      turn: expect.objectContaining({ content: "Understood." }),
+    });
+    expect(
+      nextState.thread.some((entry) => entry.kind === "pending-assistant"),
+    ).toBe(false);
   });
 });

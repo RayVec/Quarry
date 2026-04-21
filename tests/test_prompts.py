@@ -186,7 +186,7 @@ def test_generation_prompt_includes_selection_comments() -> None:
 
     assert 'Selected: "threshold should be under five million dollars"' in prompt
     assert "This number is incorrect; use 10M not 5M." in prompt
-    assert "Treat each selection comment as a required edit." in prompt
+    assert "Treat comments as natural review feedback, not mandatory rewrites." in prompt
 
 
 def test_generation_prompt_includes_sentence_repair_mode() -> None:

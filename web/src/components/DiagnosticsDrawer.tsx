@@ -654,6 +654,11 @@ export function DiagnosticsDrawer({
                         value={session.refinement_count}
                       />
                       <DiagnosticsDatum
+                        label="Refine scope"
+                        testId="status-refinement-scope"
+                        value={session.refinement_scope ?? "none"}
+                      />
+                      <DiagnosticsDatum
                         label="Citations"
                         testId="status-citations"
                         value={session.citation_index?.length ?? 0}
@@ -686,11 +691,11 @@ export function DiagnosticsDrawer({
                     </Card>
                   ) : null}
 
-                  <Card className="surface-card">
-                    <CardHeader>
-                      <CardTitle className="tiny-label">Feedback</CardTitle>
-                    </CardHeader>
-                    <CardContent className="diagnostics-grid diagnostics-grid--three-column">
+                    <Card className="surface-card">
+                      <CardHeader>
+                        <CardTitle className="tiny-label">Feedback</CardTitle>
+                      </CardHeader>
+                      <CardContent className="diagnostics-grid diagnostics-grid--three-column">
                       <DiagnosticsDatum
                         label="Comments"
                         value={session.feedback.comments?.length ?? 0}
@@ -699,14 +704,27 @@ export function DiagnosticsDrawer({
                         label="Resolved"
                         value={session.feedback.resolved_comments?.length ?? 0}
                       />
-                      <DiagnosticsDatum
-                        label="Citation replacements"
-                        value={
-                          session.feedback.citation_replacements?.length ?? 0
-                        }
-                      />
-                    </CardContent>
-                  </Card>
+                        <DiagnosticsDatum
+                          label="Citation replacements"
+                          value={
+                            session.feedback.citation_replacements?.length ?? 0
+                          }
+                        />
+                      </CardContent>
+                    </Card>
+
+                    {session.change_summary ? (
+                      <Card className="surface-card">
+                        <CardHeader>
+                          <CardTitle className="tiny-label">
+                            Refinement Summary
+                          </CardTitle>
+                        </CardHeader>
+                        <CardContent>
+                          <p>{session.change_summary}</p>
+                        </CardContent>
+                      </Card>
+                    ) : null}
                 </>
               ) : (
                 <Alert>

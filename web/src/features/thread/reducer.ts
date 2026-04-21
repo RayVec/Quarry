@@ -1,8 +1,11 @@
-import type { AssistantMessageSource, SessionState } from "@/types";
+import type { AssistantTurnState, MessageRunState, SessionState } from "@/types";
 import {
   assistantEntry,
-  isAssistantEntry,
+  chatAssistantEntry,
+  isResearchAssistantEntry,
   isPendingAssistantEntry,
+  normalizeThread,
+  userEntry,
   updateRecentResearch,
   type ThreadEntry,
   type RecentResearchItem,
@@ -30,26 +33,53 @@ type ThreadControllerAction =
   | { type: "search/reset" }
   | { type: "recentResearch/delete"; itemId: string }
   | {
-      type: "query/submitStarted";
+      type: "message/submitStarted";
       pendingId: string;
       userEntryId: string;
       query: string;
       fresh: boolean;
       createdAt: string;
     }
-  | { type: "query/startFailed"; pendingId: string }
+  | { type: "query/startFailed"; pendingId?: string }
   | {
-      type: "thread/pendingUpdated";
+      type: "message/runStarted";
+      pendingId: string;
+      messageRun: MessageRunState;
+    }
+  | {
+      type: "message/chatCompleted";
+      pendingId: string;
+      turn: AssistantTurnState;
+    }
+  | {
+      type: "message/searchStarted";
+      pendingId: string;
+      userEntryId: string;
+      messageRun: MessageRunState;
+      session: SessionState;
+    }
+  | {
+      type: "thread/pendingMessageRunUpdated";
+      pendingId: string;
+      messageRun: MessageRunState;
+    }
+  | {
+      type: "thread/pendingMessageRunFailed";
+      pendingId: string;
+      messageRun: MessageRunState;
+    }
+  | {
+      type: "thread/pendingSessionUpdated";
       pendingId: string;
       session: SessionState;
     }
   | {
-      type: "thread/pendingCompleted";
+      type: "thread/pendingSessionCompleted";
       pendingId: string;
       session: SessionState;
     }
   | {
-      type: "thread/pendingFailed";
+      type: "thread/pendingSessionFailed";
       pendingId: string;
       session: SessionState;
     }
@@ -60,9 +90,10 @@ type ThreadControllerAction =
       session: SessionState;
     }
   | {
-      type: "thread/assistantAppended";
-      source: AssistantMessageSource;
+      type: "thread/refinementCompleted";
       session: SessionState;
+      userQuery: string;
+      createdAt: string;
     }
   | {
       type: "thread/localCommentAdded";
@@ -92,6 +123,12 @@ export function createThreadControllerState(
   };
 }
 
+function archiveResearchAssistants(thread: ThreadEntry[]) {
+  return thread.map((entry) =>
+    isResearchAssistantEntry(entry) ? { ...entry, interactive: false } : entry,
+  );
+}
+
 export function replaceInteractiveSessionInThread(
   thread: ThreadEntry[],
   nextSession: SessionState,
@@ -99,7 +136,7 @@ export function replaceInteractiveSessionInThread(
   const next = [...thread];
   for (let index = next.length - 1; index >= 0; index -= 1) {
     const entry = next[index];
-    if (isAssistantEntry(entry) && entry.interactive) {
+    if (isResearchAssistantEntry(entry) && entry.interactive) {
       next[index] = { ...entry, session: nextSession };
       break;
     }
@@ -107,17 +144,59 @@ export function replaceInteractiveSessionInThread(
   return next;
 }
 
-export function appendAssistantSessionToThread(
+export function appendChatTurnToThread(thread: ThreadEntry[], nextTurn: AssistantTurnState) {
+  return [...thread, chatAssistantEntry("query", nextTurn)];
+}
+
+export function appendRefinementToThread(
   thread: ThreadEntry[],
   nextSession: SessionState,
-  source: AssistantMessageSource,
+  options: {
+    userQuery: string;
+    createdAt: string;
+  },
 ) {
   return [
-    ...thread.map((entry) =>
-      isAssistantEntry(entry) ? { ...entry, interactive: false } : entry,
-    ),
-    assistantEntry(source, nextSession, true),
+    ...archiveResearchAssistants(thread),
+    userEntry(options.userQuery, {
+      createdAt: options.createdAt,
+      synthetic: true,
+      researchBacked: true,
+    }),
+    assistantEntry("refinement", nextSession, true),
   ];
+}
+
+export function attachMessageRunToPendingThread(
+  thread: ThreadEntry[],
+  pendingId: string,
+  nextMessageRun: MessageRunState,
+) {
+  return thread.map((entry) =>
+    isPendingAssistantEntry(entry) && entry.id === pendingId
+      ? { ...entry, messageRun: nextMessageRun }
+      : entry,
+  );
+}
+
+export function attachPendingSessionToThread(
+  thread: ThreadEntry[],
+  pendingId: string,
+  userEntryId: string,
+  nextMessageRun: MessageRunState,
+  nextSession: SessionState,
+) {
+  return archiveResearchAssistants(
+    thread.map((entry) => {
+      if (entry.kind === "user" && entry.id === userEntryId) {
+        return { ...entry, researchBacked: true };
+      }
+      if (isPendingAssistantEntry(entry) && entry.id === pendingId) {
+        return { ...entry, messageRun: nextMessageRun, session: nextSession };
+      }
+      return entry;
+    }),
+  );
 }
 
 export function updatePendingSessionInThread(
@@ -137,15 +216,27 @@ export function completePendingSessionInThread(
   pendingId: string,
   nextSession: SessionState,
 ) {
-  return thread.map((entry) => {
-    if (isPendingAssistantEntry(entry) && entry.id === pendingId) {
-      return assistantEntry("query", nextSession, true);
-    }
-    if (isAssistantEntry(entry)) {
-      return { ...entry, interactive: false };
-    }
-    return entry;
-  });
+  return normalizeThread(
+    thread.map((entry) =>
+      isPendingAssistantEntry(entry) && entry.id === pendingId
+        ? assistantEntry("query", nextSession, true)
+        : entry,
+    ),
+  );
+}
+
+export function completePendingChatTurnInThread(
+  thread: ThreadEntry[],
+  pendingId: string,
+  nextTurn: AssistantTurnState,
+) {
+  return normalizeThread(
+    thread.map((entry) =>
+      isPendingAssistantEntry(entry) && entry.id === pendingId
+        ? chatAssistantEntry("query", nextTurn)
+        : entry,
+    ),
+  );
 }
 
 export function failPendingSessionInThread(
@@ -160,13 +251,25 @@ export function failPendingSessionInThread(
   );
 }
 
+export function failPendingMessageRunInThread(
+  thread: ThreadEntry[],
+  pendingId: string,
+  nextMessageRun: MessageRunState,
+) {
+  return thread.map((entry) =>
+    isPendingAssistantEntry(entry) && entry.id === pendingId
+      ? { ...entry, messageRun: nextMessageRun }
+      : entry,
+  );
+}
+
 export function replaceAssistantEntrySessionInThread(
   thread: ThreadEntry[],
   entryId: string,
   nextSession: SessionState,
 ) {
   return thread.map((entry) =>
-    isAssistantEntry(entry) && entry.id === entryId
+    isResearchAssistantEntry(entry) && entry.id === entryId
       ? { ...entry, session: nextSession }
       : entry,
   );
@@ -178,7 +281,7 @@ export function addLocalCommentToThread(
   comment: SessionComment,
 ) {
   return thread.map((entry) => {
-    if (!isAssistantEntry(entry) || entry.id !== entryId) {
+    if (!isResearchAssistantEntry(entry) || entry.id !== entryId) {
       return entry;
     }
     return {
@@ -201,7 +304,7 @@ export function updateThreadComment(
   commentText: string,
 ) {
   return thread.map((entry) => {
-    if (!isAssistantEntry(entry) || entry.id !== entryId) {
+    if (!isResearchAssistantEntry(entry) || entry.id !== entryId) {
       return entry;
     }
     return {
@@ -227,7 +330,7 @@ export function deleteThreadComment(
   commentId: string,
 ) {
   return thread.map((entry) => {
-    if (!isAssistantEntry(entry) || entry.id !== entryId) {
+    if (!isResearchAssistantEntry(entry) || entry.id !== entryId) {
       return entry;
     }
     return {
@@ -268,42 +371,96 @@ export function threadControllerReducer(
           (item) => item.id !== action.itemId,
         ),
       };
-    case "query/submitStarted":
+    case "message/submitStarted":
       return {
         ...state,
         loading: true,
         query: "",
-        recentResearch: updateRecentResearch(
-          state.recentResearch,
-          action.query,
-        ),
         thread: [
-          ...(action.fresh
-            ? []
-            : state.thread.map((entry) =>
-                isAssistantEntry(entry)
-                  ? { ...entry, interactive: false }
-                  : entry,
-              )),
+          ...archiveResearchAssistants(action.fresh ? [] : state.thread),
           {
             id: action.userEntryId,
             kind: "user",
             query: action.query,
             createdAt: action.createdAt,
+            researchBacked: false,
           },
-          { id: action.pendingId, kind: "pending-assistant", session: null },
+          {
+            id: action.pendingId,
+            kind: "pending-assistant",
+            userEntryId: action.userEntryId,
+            messageRun: null,
+            session: null,
+          },
         ],
       };
     case "query/startFailed":
       return {
         ...state,
         loading: false,
-        thread: state.thread.filter(
-          (entry) =>
-            !(isPendingAssistantEntry(entry) && entry.id === action.pendingId),
+        thread:
+          action.pendingId == null
+            ? state.thread
+            : state.thread.filter(
+                (entry) =>
+                  !(
+                    isPendingAssistantEntry(entry) &&
+                    entry.id === action.pendingId
+                  ),
+              ),
+      };
+    case "message/runStarted":
+      return {
+        ...state,
+        thread: attachMessageRunToPendingThread(
+          state.thread,
+          action.pendingId,
+          action.messageRun,
         ),
       };
-    case "thread/pendingUpdated":
+    case "message/chatCompleted":
+      return {
+        ...state,
+        loading: false,
+        thread: completePendingChatTurnInThread(
+          state.thread,
+          action.pendingId,
+          action.turn,
+        ),
+      };
+    case "message/searchStarted":
+      const nextThread = attachPendingSessionToThread(
+        state.thread,
+        action.pendingId,
+        action.userEntryId,
+        action.messageRun,
+        action.session,
+      );
+      return {
+        ...state,
+        recentResearch: updateRecentResearch(state.recentResearch, nextThread),
+        thread: nextThread,
+      };
+    case "thread/pendingMessageRunUpdated":
+      return {
+        ...state,
+        thread: attachMessageRunToPendingThread(
+          state.thread,
+          action.pendingId,
+          action.messageRun,
+        ),
+      };
+    case "thread/pendingMessageRunFailed":
+      return {
+        ...state,
+        loading: false,
+        thread: failPendingMessageRunInThread(
+          state.thread,
+          action.pendingId,
+          action.messageRun,
+        ),
+      };
+    case "thread/pendingSessionUpdated":
       return {
         ...state,
         thread: updatePendingSessionInThread(
@@ -312,7 +469,7 @@ export function threadControllerReducer(
           action.session,
         ),
       };
-    case "thread/pendingCompleted":
+    case "thread/pendingSessionCompleted":
       return {
         ...state,
         thread: completePendingSessionInThread(
@@ -321,7 +478,7 @@ export function threadControllerReducer(
           action.session,
         ),
       };
-    case "thread/pendingFailed":
+    case "thread/pendingSessionFailed":
       return {
         ...state,
         thread: failPendingSessionInThread(
@@ -344,14 +501,13 @@ export function threadControllerReducer(
           action.session,
         ),
       };
-    case "thread/assistantAppended":
+    case "thread/refinementCompleted":
       return {
         ...state,
-        thread: appendAssistantSessionToThread(
-          state.thread,
-          action.session,
-          action.source,
-        ),
+        thread: appendRefinementToThread(state.thread, action.session, {
+          userQuery: action.userQuery,
+          createdAt: action.createdAt,
+        }),
       };
     case "thread/localCommentAdded":
       return {

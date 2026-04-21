@@ -18,8 +18,10 @@ from quarry.adapters.interfaces import (
 )
 from quarry.domain.models import (
     ChunkObject,
+    CommentIntent,
     ConfidenceLabel,
     GenerationRequest,
+    RefinementScope,
     RetrievalFilters,
     RetrievedPassage,
     ScoredReference,
@@ -49,6 +51,20 @@ def extract_exact_quote(text: str, *, min_words: int = 15, max_words: int = 28) 
 
 
 def no_ref_fallback_response(request: GenerationRequest) -> str:
+    if request.mode == "refinement_planning":
+        return json.dumps(
+            {
+                "overall_scope": "no_change",
+                "change_summary": "The current answer can remain unchanged.",
+                "comments": [],
+                "target_sentence_indices": [],
+            }
+        )
+    if request.mode == "sentence_refinement":
+        sentence = normalize_text(request.target_sentence_text or request.failed_sentence_text or "")
+        if not sentence:
+            sentence = "This sentence could not be grounded in the available evidence."
+        return f"[CLAIM] {sentence} [NO_REF]"
     if request.mode == "regeneration":
         return "[CLAIM] This sentence could not be grounded in the available evidence. [NO_REF]"
     if request.mode == "supplement":
@@ -266,7 +282,98 @@ class SimpleCrossEncoderReranker(Reranker):
 
 
 class DeterministicGenerationClient(GenerationClient):
+    AFFIRMATION_MARKERS = (
+        "good",
+        "great",
+        "aligned",
+        "looks right",
+        "looks good",
+        "perfectly aligned",
+        "agree",
+        "works for me",
+    )
+    GLOBAL_MARKERS = (
+        "rewrite",
+        "restructure",
+        "reorganize",
+        "reframe",
+        "completely",
+        "overall answer",
+        "main structure",
+    )
+
+    def _infer_comment_intent(self, comment_text: str) -> tuple[CommentIntent, RefinementScope]:
+        lowered = normalize_text(comment_text).lower()
+        if any(marker in lowered for marker in self.AFFIRMATION_MARKERS):
+            return CommentIntent.AFFIRMATION, RefinementScope.NONE
+        if any(marker in lowered for marker in self.GLOBAL_MARKERS):
+            return CommentIntent.REWRITE_REQUEST, RefinementScope.GLOBAL
+        if any(marker in lowered for marker in ("add", "clarify", "tighten", "revise", "explain", "detail", "adjust")):
+            return CommentIntent.MINOR_EDIT, RefinementScope.LOCAL
+        return CommentIntent.SUBSTANTIVE_EDIT, RefinementScope.LOCAL
+
     async def generate(self, request: GenerationRequest) -> str:
+        if request.mode == "refinement_planning":
+            comment_payloads: list[dict[str, object]] = []
+            target_sentence_indices = sorted({index for index in request.target_sentence_indices if index >= 0})
+            overall_scope = RefinementScope.NONE
+
+            if request.rejected_pairs or request.mismatch_citation_ids:
+                overall_scope = RefinementScope.GLOBAL
+
+            for comment in request.selection_comments:
+                intent, scope = self._infer_comment_intent(comment.comment_text)
+                if scope == RefinementScope.GLOBAL:
+                    overall_scope = RefinementScope.GLOBAL
+                elif scope == RefinementScope.LOCAL and overall_scope != RefinementScope.GLOBAL:
+                    overall_scope = RefinementScope.LOCAL
+                comment_payloads.append(
+                    {
+                        "comment_id": comment.comment_id,
+                        "intent": intent.value,
+                        "scope": scope.value if scope != RefinementScope.NONE else "no_change",
+                        "target_sentence_indices": target_sentence_indices,
+                        "summary": comment.comment_text.strip(),
+                    }
+                )
+
+            if request.rejected_pairs or request.mismatch_citation_ids:
+                change_summary = "Reviewer feedback requires broader evidence-aware revision."
+            elif overall_scope == RefinementScope.LOCAL:
+                change_summary = "Reviewer feedback calls for a localized edit."
+            else:
+                change_summary = "Reviewer feedback affirms the current answer."
+
+            return json.dumps(
+                {
+                    "overall_scope": (
+                        "global_rewrite"
+                        if overall_scope == RefinementScope.GLOBAL
+                        else "local_edit" if overall_scope == RefinementScope.LOCAL else "no_change"
+                    ),
+                    "change_summary": change_summary,
+                    "comments": comment_payloads,
+                    "target_sentence_indices": target_sentence_indices,
+                }
+            )
+
+        if request.mode == "sentence_refinement":
+            sentence = normalize_text(request.target_sentence_text or request.failed_sentence_text or "")
+            note = normalize_text(request.revision_note or request.failed_sentence_comment or "").lower()
+            citations = request.citation_index
+            if citations:
+                quote = extract_exact_quote(citations[0].text, min_words=8, max_words=18)
+                if quote:
+                    sentence = quote[0].upper() + quote[1:]
+                    if "tight" in note and "subset" in sentence.lower():
+                        sentence = "FEED maturity elements are a subset of the entire PDRI."
+                    if not sentence.endswith("."):
+                        sentence += "."
+                    return f'[CLAIM] {sentence} [REF: "{quote.replace(chr(34), chr(39))}"]'
+            if not sentence:
+                sentence = "This sentence could not be grounded in the available evidence."
+            return f"[CLAIM] {sentence} [NO_REF]"
+
         citations = request.citation_index
         if request.mismatch_citation_ids:
             citations = [citation for citation in citations if citation.citation_id not in request.mismatch_citation_ids]

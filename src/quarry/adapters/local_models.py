@@ -313,7 +313,13 @@ class LocalStructuredGenerationClient(GenerationClient):
 
     async def generate(self, request: GenerationRequest) -> str:
         try:
-            max_tokens = 384 if request.mode == "regeneration" else self.backend.default_max_new_tokens
+            max_tokens = (
+                256
+                if request.mode == "refinement_planning"
+                else 384
+                if request.mode in {"regeneration", "sentence_refinement"}
+                else self.backend.default_max_new_tokens
+            )
             return await self.backend.complete(generation_prompt(request), temperature=0.2, max_new_tokens=max_tokens, operation=f"generation:{request.mode}")
         except Exception:
             logger.warning("local generation fell back to conservative no-ref implementation")

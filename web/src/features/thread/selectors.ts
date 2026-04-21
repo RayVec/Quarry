@@ -1,28 +1,30 @@
 import type { SessionState } from "@/types";
 import {
-  isAssistantEntry,
+  getThreadTitleQuery as getThreadTitleQueryFromModel,
+  isChatAssistantEntry,
   isPendingAssistantEntry,
-  type AssistantThreadEntry,
+  isResearchAssistantEntry,
   type PendingAssistantThreadEntry,
+  type ResearchAssistantThreadEntry,
   type ThreadEntry,
   type UserThreadEntry,
 } from "./model";
 
 export function getLatestAssistant(
   thread: ThreadEntry[],
-): AssistantThreadEntry | null {
-  return [...thread].reverse().find(isAssistantEntry) ?? null;
+): ResearchAssistantThreadEntry | null {
+  return [...thread].reverse().find(isResearchAssistantEntry) ?? null;
 }
 
 export function getInteractiveAssistant(
   thread: ThreadEntry[],
-): AssistantThreadEntry | null {
+): ResearchAssistantThreadEntry | null {
   return (
     [...thread]
       .reverse()
       .find(
-        (entry): entry is AssistantThreadEntry =>
-          isAssistantEntry(entry) && entry.interactive,
+        (entry): entry is ResearchAssistantThreadEntry =>
+          isResearchAssistantEntry(entry) && entry.interactive,
       ) ?? null
   );
 }
@@ -53,11 +55,39 @@ export function getLatestSession(thread: ThreadEntry[]): SessionState | null {
   );
 }
 
-export function getLatestUserQuery(thread: ThreadEntry[]): string | null {
+export function getLatestGroundedSessionId(
+  thread: ThreadEntry[],
+): string | null {
+  for (const entry of [...thread].reverse()) {
+    if (
+      isResearchAssistantEntry(entry) &&
+      entry.session.query_status === "completed" &&
+      entry.session.response_mode === "response_review" &&
+      entry.session.generated_response.trim()
+    ) {
+      return entry.session.session_id;
+    }
+    if (isChatAssistantEntry(entry) && entry.turn.derived_from_session_id) {
+      return entry.turn.derived_from_session_id;
+    }
+  }
+  return null;
+}
+
+export function getLatestResearchQuery(thread: ThreadEntry[]): string | null {
   return (
     [...thread]
       .reverse()
-      .find((entry): entry is UserThreadEntry => entry.kind === "user")
+      .find(
+        (entry): entry is UserThreadEntry =>
+          entry.kind === "user" &&
+          !entry.synthetic &&
+          entry.researchBacked === true,
+      )
       ?.query ?? null
   );
+}
+
+export function getThreadTitleQuery(thread: ThreadEntry[]): string | null {
+  return getThreadTitleQueryFromModel(thread);
 }

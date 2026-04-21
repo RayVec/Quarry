@@ -7,7 +7,7 @@ import {
 
 interface AppSidebarProps {
   recentResearch: RecentResearchItem[];
-  latestUserQuery: string | null;
+  threadTitleQuery: string | null;
   onDeleteRecentResearch: (itemId: string) => void;
   onNewSearch: () => void;
   onResumeResearch: (query: string) => Promise<void>;
@@ -15,7 +15,7 @@ interface AppSidebarProps {
 
 export function AppSidebar({
   recentResearch,
-  latestUserQuery,
+  threadTitleQuery,
   onDeleteRecentResearch,
   onNewSearch,
   onResumeResearch,
@@ -43,7 +43,7 @@ export function AppSidebar({
           <div className="recent-research-list">
             {recentResearch.map((item, index) => (
               <div
-                className={`recent-research-item ${index === 0 && latestUserQuery === item.query ? "active" : ""}`}
+                className={`recent-research-item ${index === 0 && threadTitleQuery === item.query ? "active" : ""}`}
                 key={item.id}
               >
                 <Button
